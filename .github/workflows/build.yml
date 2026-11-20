@@ -47,8 +47,8 @@ jobs:
           #define NTREES  90
           #define NCHICK  8
           #define NDROPS  60
-          #define PEN_X   (-34.0f)
-          #define PEN_Z   (0.0f)
+          #define PEN_X   (-4.0f)
+          #define PEN_Z   (16.0f)
 
           typedef struct { float nx, ny, nz, x, y, z; } Vtx;
           #define VTX_TYPE (GU_NORMAL_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_3D)
