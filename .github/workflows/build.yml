@@ -1,4 +1,4 @@
-name: Gerar ISO Fazenda Simulator GS
+       name: Gerar ISO Fazenda Simulator GS
 
 on:
   push:
@@ -20,8 +20,10 @@ jobs:
            *   Analogico  : andar          L / R : girar camera
            *   X          : plantar / colher no canteiro mais proximo
            *   Quadrado   : comprar semente (perto do mercado, $5)
-           *   Circulo    : vender colheita (perto do mercado, $12 cada)
-           *   Triangulo  : mostrar/esconder ajuda
+           *   Circulo    : vender colheita ($12) e ovos ($4) no mercado
+           *   Triangulo  : coletar ovos (no galinheiro, a oeste)
+           *   Start      : mostrar/esconder ajuda
+           *   Chuva faz as plantas crescerem 2x mais rapido!
            */
           #include <pspkernel.h>
           #include <pspdebug.h>
@@ -43,6 +45,10 @@ jobs:
           #define WORLD   95.0f
           #define NPLOTS  12
           #define NTREES  90
+          #define NCHICK  8
+          #define NDROPS  60
+          #define PEN_X   (-34.0f)
+          #define PEN_Z   (0.0f)
 
           typedef struct { float nx, ny, nz, x, y, z; } Vtx;
           #define VTX_TYPE (GU_NORMAL_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_3D)
@@ -116,6 +122,12 @@ jobs:
 
           static const float MKT_X = 0.0f, MKT_Z = -14.0f;
 
+          typedef struct { float x, z, tx, tz, ang, t, egg; } Chicken;
+          static Chicken chick[NCHICK];
+          static int eggs = 0, coopEggs = 0;
+          static int raining = 0;
+          static float weatherT = 30.0f;
+
           static unsigned int seed_rng = 12345;
           static float frand(void) {
               seed_rng = seed_rng * 1664525u + 1013904223u;
@@ -135,6 +147,14 @@ jobs:
                       z = (frand() * 2 - 1) * (WORLD - 3);
                   } while (sqrtf(x*x + z*z) < 30.0f);
                   treeX[i] = x; treeZ[i] = z; treeH[i] = 3.0f + frand() * 3.0f;
+              }
+              for (int i = 0; i < NCHICK; i++) {
+                  chick[i].x = PEN_X + (frand() * 2 - 1) * 6.0f;
+                  chick[i].z = PEN_Z + (frand() * 2 - 1) * 6.0f;
+                  chick[i].tx = chick[i].x; chick[i].tz = chick[i].z;
+                  chick[i].ang = frand() * 6.28f;
+                  chick[i].t = frand() * 3.0f;
+                  chick[i].egg = frand() * 25.0f;
               }
           }
 
@@ -175,14 +195,49 @@ jobs:
                   if (pz > WORLD) pz = WORLD;
               }
 
+              weatherT -= dt;
+              if (weatherT <= 0) {
+                  raining = !raining;
+                  weatherT = raining ? (15.0f + frand() * 15.0f) : (40.0f + frand() * 40.0f);
+                  say(raining ? "Comecou a chover! Plantas crescem 2x." : "A chuva parou.");
+              }
+              float gm = raining ? 2.0f : 1.0f;
+
+              for (int i = 0; i < NCHICK; i++) {
+                  Chicken *c = &chick[i];
+                  c->t -= dt;
+                  if (c->t <= 0) {
+                      c->tx = PEN_X + (frand() * 2 - 1) * 6.5f;
+                      c->tz = PEN_Z + (frand() * 2 - 1) * 6.5f;
+                      c->t = 2.0f + frand() * 4.0f;
+                  }
+                  float cdx = c->tx - c->x, cdz = c->tz - c->z;
+                  float cd = sqrtf(cdx * cdx + cdz * cdz);
+                  if (cd > 0.2f) {
+                      c->x += cdx / cd * 1.2f * dt;
+                      c->z += cdz / cd * 1.2f * dt;
+                      c->ang = atan2f(cdx, cdz);
+                  }
+                  c->egg += dt;
+                  if (c->egg >= 25.0f) { c->egg = 0; if (coopEggs < 24) coopEggs++; }
+              }
+
               for (int i = 0; i < NPLOTS; i++) {
                   if (plots[i].stage >= 1 && plots[i].stage < 3) {
-                      plots[i].t += dt;
+                      plots[i].t += dt * gm;
                       if (plots[i].t >= 12.0f) { plots[i].t = 0; plots[i].stage++; }
                   }
               }
 
-              if (pressed & PSP_CTRL_TRIANGLE) showHelp = !showHelp;
+              if (pressed & PSP_CTRL_START) showHelp = !showHelp;
+
+              if (pressed & PSP_CTRL_TRIANGLE) {
+                  if (fabsf(px - PEN_X) < 9.0f && fabsf(pz - PEN_Z) < 9.0f) {
+                      if (coopEggs > 0) {
+                          eggs += coopEggs; coopEggs = 0; say("Coletou os ovos!");
+                      } else say("Sem ovos por enquanto.");
+                  } else say("Va ate o galinheiro (oeste).");
+              }
 
               if (pressed & PSP_CTRL_CROSS) {
                   int i = nearest_plot();
@@ -204,15 +259,31 @@ jobs:
               }
               if (pressed & PSP_CTRL_CIRCLE) {
                   if (!atMarket) say("Va ate o mercado.");
-                  else if (crops > 0) { money += crops * 12; crops = 0; say("Vendeu a colheita!"); }
+                  else if (crops > 0 || eggs > 0) {
+                      money += crops * 12 + eggs * 4; crops = 0; eggs = 0; say("Vendeu tudo!");
+                  }
                   else say("Nada para vender.");
               }
+          }
+
+          static void fence_line(float x1, float z1, float x2, float z2) {
+              float dx = x2 - x1, dz = z2 - z1;
+              float len = sqrtf(dx * dx + dz * dz);
+              float ang = atan2f(dx, dz);
+              float mx = (x1 + x2) * 0.5f, mz = (z1 + z2) * 0.5f;
+              int n = (int)(len / 4.0f);
+              if (n < 1) n = 1;
+              box(mx, 0.35f, mz, 0.12f, 0.12f, len, ang, 0xff3a6a9a);
+              box(mx, 0.75f, mz, 0.12f, 0.12f, len, ang, 0xff3a6a9a);
+              for (int i = 0; i <= n; i++)
+                  box(x1 + dx * i / n, 0, z1 + dz * i / n, 0.25f, 1.0f, 0.25f, 0, 0xff2a4a70);
           }
 
           static void draw_scene(void) {
               /* ciclo dia/noite: 150 s */
               float day = 0.5f + 0.5f * cosf(gameTime * 2.0f * PI_F / 150.0f); /* 1=dia */
               float b = 0.25f + 0.75f * day;
+              if (raining) b *= 0.7f;
 
               unsigned int sky = 0xff000000
                   | ((unsigned int)(235 * b) << 16) | ((unsigned int)(190 * b) << 8) | (unsigned int)(110 * b);
@@ -269,8 +340,33 @@ jobs:
               box(MKT_X, 1.0f, MKT_Z, 4.4f, 0.8f, 1.5f, 0, 0xff3090d0);
               box(MKT_X, 3.0f, MKT_Z, 5.5f, 0.3f, 3.0f, 0, 0xff2020d0);
 
+              /* cerca da plantacao */
+              fence_line(5, -8, 23, -8);
+              fence_line(23, -8, 23, 8);
+              fence_line(23, 8, 5, 8);
+              fence_line(5, 8, 5, -8);
+
+              /* galinheiro: cerca, casinha e galinhas */
+              fence_line(PEN_X - 8, PEN_Z - 8, PEN_X + 8, PEN_Z - 8);
+              fence_line(PEN_X + 8, PEN_Z - 8, PEN_X + 8, PEN_Z + 8);
+              fence_line(PEN_X + 8, PEN_Z + 8, PEN_X - 8, PEN_Z + 8);
+              fence_line(PEN_X - 8, PEN_Z + 8, PEN_X - 8, PEN_Z - 8);
+              box(PEN_X - 5, 0, PEN_Z - 5, 3.0f, 2.0f, 3.0f, 0, 0xff4070c0);
+              box(PEN_X - 5, 2.0f, PEN_Z - 5, 3.4f, 0.8f, 3.4f, 0, 0xff202080);
+              for (int i = 0; i < NCHICK; i++) {
+                  Chicken *c = &chick[i];
+                  box(c->x, 0.15f, c->z, 0.5f, 0.4f, 0.7f, c->ang, 0xfff0f0f0);
+                  box(c->x + sinf(c->ang) * 0.4f, 0.45f, c->z + cosf(c->ang) * 0.4f,
+                      0.25f, 0.3f, 0.25f, c->ang, 0xff2020e0);
+              }
+              for (int i = 0; i < coopEggs && i < 24; i++)
+                  box(PEN_X + 3.0f + (i % 6) * 0.5f, 0.05f, PEN_Z + 6.0f - (i / 6) * 0.5f,
+                      0.25f, 0.3f, 0.25f, 0, 0xffd0f0ff);
+
               /* arvores */
               for (int i = 0; i < NTREES; i++) {
+                  float tdx = treeX[i] - px, tdz = treeZ[i] - pz;
+                  if (tdx * tdx + tdz * tdz > 90.0f * 90.0f) continue;
                   box(treeX[i], 0, treeZ[i], 0.8f, treeH[i], 0.8f, 0, 0xff204060);
                   box(treeX[i], treeH[i] - 0.5f, treeZ[i], 3.2f, 2.8f, 3.2f, 0.4f * i, 0xff208030);
               }
@@ -280,18 +376,31 @@ jobs:
               box(px, 1.4f, pz, 0.6f, 0.6f, 0.6f, pang, 0xff90b8f0);
               box(px, 2.0f, pz, 0.8f, 0.15f, 0.8f, pang, 0xff40a0e0); /* chapeu */
 
+              /* chuva */
+              if (raining) {
+                  for (int i = 0; i < NDROPS; i++) {
+                      float ox = ((i * 37) % 31) - 15.0f;
+                      float oz = ((i * 53) % 29) - 14.0f;
+                      float y = 14.0f - fmodf((i * 1.7f) + gameTime * 18.0f, 14.0f);
+                      box(px + ox, y, pz + oz, 0.05f, 0.7f, 0.05f, 0, 0xffffc8a0);
+                  }
+              }
+
               sceGuDisable(GU_LIGHTING);
           }
 
           static void draw_hud(int drawOffset) {
               pspDebugScreenSetOffset(drawOffset);
               pspDebugScreenSetXY(0, 0);
-              pspDebugScreenPrintf(" FAZENDA SIMULATOR GS    $%d  Sementes:%d  Colheita:%d\n", money, seeds, crops);
-              if (msgTimer > 0) { pspDebugScreenSetXY(1, 2); pspDebugScreenPrintf("%s", msg); }
+              pspDebugScreenPrintf(" FAZENDA SIMULATOR GS  $%d  Sem:%d  Col:%d  Ovos:%d\n", money, seeds, crops, eggs);
+              pspDebugScreenPrintf(" Dia %d  %s  (ovos no galinheiro: %d)\n",
+                                   (int)(gameTime / 150.0f) + 1, raining ? "CHUVA" : "Sol", coopEggs);
+              if (msgTimer > 0) { pspDebugScreenSetXY(1, 3); pspDebugScreenPrintf("%s", msg); }
               if (showHelp) {
                   pspDebugScreenSetXY(0, 30);
                   pspDebugScreenPrintf(" Analog:andar L/R:camera X:plantar/colher\n"
-                                       " []:comprar semente  O:vender (no mercado)  /\\:ajuda");
+                                       " []:comprar semente  O:vender (mercado)\n"
+                                       " /\\:coletar ovos (galinheiro)  START:ajuda");
               }
           }
 
@@ -341,61 +450,4 @@ jobs:
                   update(dt, &pad, pressed);
 
                   sceGuStart(GU_DIRECT, list);
-                  draw_scene();
-                  sceGuFinish();
-                  sceGuSync(0, 0);
-
-                  draw_hud(drawOffset);
-
-                  sceDisplayWaitVblankStart();
-                  sceGuSwapBuffers();
-                  drawOffset = drawOffset ? 0 : FRAME;
-              }
-
-              sceGuTerm();
-              sceKernelExitGame();
-              return 0;
-          }
-          FIM_DO_CODIGO
-          cat > Makefile <<'FIM_MK'
-          TARGET = FazendaSimulatorGS
-          OBJS = src/main.o
-          INCDIR =
-          CFLAGS = -O2 -G0 -Wall
-          CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
-          ASFLAGS = $(CFLAGS)
-          LIBDIR =
-          LDFLAGS =
-          LIBS = -lpspgum -lpspgu -lpspdebug -lpspdisplay -lpspge -lpspctrl -lm
-          BUILD_PRX = 1
-          EXTRA_TARGETS = EBOOT.PBP
-          PSP_EBOOT_TITLE = Fazenda Simulator GS
-          PSPSDK = $(shell psp-config --pspsdk-path)
-          include $(PSPSDK)/lib/build.mak
-          FIM_MK
-
-      - name: Compilar com PSPSDK
-        run: |
-          mkdir -p iso_root/PSP_GAME/SYSDIR
-          docker run --rm -v "$PWD":/src -w /src pspdev/pspdev sh -c '
-            make clean; make &&
-            mksfoex -s DISC_ID=FZGS00001 -s DISC_VERSION=1.00 -d PARENTAL_LEVEL=1 \
-              -s PSP_SYSTEM_VER=1.00 -d REGION=32768 \
-              "Fazenda Simulator GS" iso_root/PSP_GAME/PARAM.SFO'
-          sudo chown -R "$USER" .
-          test -f FazendaSimulatorGS.prx
-
-      - name: Gerar ISO
-        run: |
-          sudo apt-get update && sudo apt-get install -y genisoimage
-          cp FazendaSimulatorGS.prx iso_root/PSP_GAME/SYSDIR/EBOOT.BIN
-          genisoimage -iso-level 4 -xa -A "PSP GAME" -V "FAZENDAGS" \
-            -sysid "PSP GAME" -volset "PSP GAME" -p "PSP GAME" -publisher "GS" \
-            -o FazendaSimulatorGS.iso iso_root
-          ls -la FazendaSimulatorGS.iso
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: FazendaSimulatorGS-ISO
-          path: FazendaSimulatorGS.iso
-          
+                   
