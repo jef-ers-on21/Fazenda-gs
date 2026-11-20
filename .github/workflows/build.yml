@@ -450,4 +450,61 @@ jobs:
                   update(dt, &pad, pressed);
 
                   sceGuStart(GU_DIRECT, list);
+                                    draw_scene();
+                  sceGuFinish();
+                  sceGuSync(0, 0);
+
+                  draw_hud(drawOffset);
+
+                  sceDisplayWaitVblankStart();
+                  sceGuSwapBuffers();
+                  drawOffset = drawOffset ? 0 : FRAME;
+              }
+
+              sceGuTerm();
+              sceKernelExitGame();
+              return 0;
+          }
+          FIM_DO_CODIGO
+          cat > Makefile <<'FIM_MK'
+          TARGET = FazendaSimulatorGS
+          OBJS = src/main.o
+          INCDIR =
+          CFLAGS = -O2 -G0 -Wall
+          CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
+          ASFLAGS = $(CFLAGS)
+          LIBDIR =
+          LDFLAGS =
+          LIBS = -lpspgum -lpspgu -lpspdebug -lpspdisplay -lpspge -lpspctrl -lm
+          BUILD_PRX = 1
+          EXTRA_TARGETS = EBOOT.PBP
+          PSP_EBOOT_TITLE = Fazenda Simulator GS
+          PSPSDK = $(shell psp-config --pspsdk-path)
+          include $(PSPSDK)/lib/build.mak
+          FIM_MK
+
+      - name: Compilar com PSPSDK
+        run: |
+          mkdir -p iso_root/PSP_GAME/SYSDIR
+          docker run --rm -v "$PWD":/src -w /src pspdev/pspdev sh -c '
+            make clean; make &&
+            mksfoex -s DISC_ID=FZGS00001 -s DISC_VERSION=1.00 -d PARENTAL_LEVEL=1 \
+              -s PSP_SYSTEM_VER=1.00 -d REGION=32768 \
+              "Fazenda Simulator GS" iso_root/PSP_GAME/PARAM.SFO'
+          sudo chown -R "$USER" .
+          test -f FazendaSimulatorGS.prx
+
+      - name: Gerar ISO
+        run: |
+          sudo apt-get update && sudo apt-get install -y genisoimage
+          cp FazendaSimulatorGS.prx iso_root/PSP_GAME/SYSDIR/EBOOT.BIN
+          genisoimage -iso-level 4 -xa -A "PSP GAME" -V "FAZENDAGS" \
+            -sysid "PSP GAME" -volset "PSP GAME" -p "PSP GAME" -publisher "GS" \
+            -o FazendaSimulatorGS.iso iso_root
+          ls -la FazendaSimulatorGS.iso
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FazendaSimulatorGS-ISO
+          path: FazendaSimulatorGS.iso
                    
