@@ -4,7 +4,8 @@
  *   Analogico  : andar          L / R : girar camera
  *   X          : plantar / colher no canteiro mais proximo
  *   Quadrado   : comprar semente (perto do mercado, $5)
- *   Circulo    : vender colheita ($12) e ovos ($4) no mercado
+ *   Circulo    : vender tudo no mercado
+ *   Esq/Dir    : trocar o tipo de semente
  *   Triangulo  : coletar ovos (no galinheiro, a frente)
  *   Start      : menu (continuar / salvar / salvar e sair)
  *   Select     : mostrar/esconder ajuda
@@ -15,6 +16,7 @@
 #include <pspdisplay.h>
 #include <pspctrl.h>
 #include <pspiofilemgr.h>
+#include <pspaudio.h>
 #include <pspgu.h>
 #include <pspgum.h>
 #include <math.h>
@@ -30,7 +32,7 @@ PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 #define FRAME   0x88000
 #define PI_F    3.14159265f
 #define WORLD   95.0f
-#define NPLOTS  12
+#define NPLOTS  24
 #define NTREES  90
 #define NCHICK  8
 #define NDROPS  60
@@ -48,7 +50,7 @@ static Vtx __attribute__((aligned(16))) groundA[GN * GN / 2 * 6];
 static Vtx __attribute__((aligned(16))) groundB[GN * GN / 2 * 6];
 
 /* ---------- callbacks de saida ---------- */
-static int running = 1;
+static volatile int running = 1;
 static int exit_cb(int a, int b, void *c) { running = 0; return 0; }
 static int cb_thread(SceSize args, void *argp) {
     int id = sceKernelCreateCallback("exit", exit_cb, NULL);
@@ -131,25 +133,116 @@ static void box(float x, float y, float z, float sx, float sy, float sz,
     sceGumDrawArray(GU_TRIANGLES, VTX_TYPE, 36, 0, cube);
 }
 
+/* ---------- audio (musica + efeitos) ---------- */
+#define STEP 15000
+static volatile int musicOn = 1;
+static volatile int sfxQ = 0;
+
+static const unsigned char MEL[][2] = {
+    {64,1},{67,1},{72,1},{67,1}, {62,1},{67,1},{71,1},{67,1},
+    {64,1},{69,1},{72,1},{69,1}, {65,1},{69,1},{72,1},{69,1},
+    {64,1},{67,1},{72,1},{67,1}, {62,1},{67,1},{71,1},{67,1},
+    {65,1},{64,1},{62,1},{60,1}, {60,4}
+};
+#define NMEL ((int)(sizeof(MEL) / sizeof(MEL[0])))
+static const unsigned char BASS[8] = { 48, 43, 45, 41, 48, 43, 41, 48 };
+static const float SFXF[6][3] = { {0,0,0}, {660,880,0}, {523,659,784}, {988,1319,0}, {440,0,0}, {160,0,0} };
+static const int   SFXMS[6][3] = { {0,0,0}, {50,70,0}, {60,60,90}, {70,170,0}, {40,0,0}, {180,0,0} };
+
+/* 1=plantar/comprar 2=colher 3=moeda 4=clique 5=erro */
+static void play_sfx(int t) { sfxQ = t; }
+
+static float midi_freq(int m) { return 440.0f * powf(2.0f, (m - 69) / 12.0f); }
+
+static int audio_thread(SceSize args, void *argp) {
+    static short buf[1024 * 2] __attribute__((aligned(64)));
+    float mfreq[40], bfreq[8];
+    int ch = sceAudioChReserve(PSP_AUDIO_NEXT_CHANNEL, 1024, PSP_AUDIO_FORMAT_STEREO);
+    if (ch < 0) return 0;
+    for (int i = 0; i < NMEL; i++) mfreq[i] = midi_freq(MEL[i][0]);
+    for (int i = 0; i < 8; i++) bfreq[i] = midi_freq(BASS[i]);
+    int mi = 0, mpos = 0, songStep = 0, sType = 0, sPos = 0;
+    float mph = 0, bph = 0, sph = 0;
+    while (running) {
+        for (int i = 0; i < 1024; i++) {
+            float out = 0;
+            if (musicOn) {
+                int nlen = MEL[mi][1] * STEP;
+                float env = 1.0f - 0.6f * ((float)mpos / (float)nlen);
+                float att = (mpos < 400) ? (mpos / 400.0f) : 1.0f;
+                mph += mfreq[mi] / 44100.0f; if (mph >= 1.0f) mph -= 1.0f;
+                bph += bfreq[(songStep / 4) % 8] / 44100.0f; if (bph >= 1.0f) bph -= 1.0f;
+                out += (4.0f * fabsf(mph - 0.5f) - 1.0f) * env * att * 0.22f;
+                out += (4.0f * fabsf(bph - 0.5f) - 1.0f) * 0.14f;
+                if (++mpos >= nlen) {
+                    mpos = 0; songStep += MEL[mi][1];
+                    if (++mi >= NMEL) { mi = 0; songStep = 0; }
+                }
+            }
+            if (sfxQ) { sType = sfxQ; sfxQ = 0; sPos = 0; }
+            if (sType) {
+                int ms = sPos * 1000 / 44100, acc = 0, seg = -1;
+                for (int k = 0; k < 3; k++) {
+                    int d = SFXMS[sType][k];
+                    if (d == 0) break;
+                    if (ms < acc + d) { seg = k; break; }
+                    acc += d;
+                }
+                if (seg < 0) sType = 0;
+                else {
+                    sph += SFXF[sType][seg] / 44100.0f; if (sph >= 1.0f) sph -= 1.0f;
+                    float dec = 1.0f - 0.5f * (float)(ms - acc) / (float)SFXMS[sType][seg];
+                    out += ((sph < 0.5f) ? 1.0f : -1.0f) * 0.14f * dec;
+                    sPos++;
+                }
+            }
+            float o = out * 30000.0f;
+            if (o > 32000.0f) o = 32000.0f;
+            if (o < -32000.0f) o = -32000.0f;
+            buf[i * 2] = buf[i * 2 + 1] = (short)o;
+        }
+        sceAudioOutputBlocking(ch, 0x5000, buf);
+    }
+    sceAudioChRelease(ch);
+    return 0;
+}
+
 /* ---------- estado do jogo ---------- */
-typedef struct { float x, z; int stage; float t; } Plot;
+#define NTYPES 4
+#define NCOW   3
+#define NPIG   3
+#define COW_X  (-28.0f)
+#define COW_Z  (4.0f)
+#define SHOP_X (14.0f)
+#define SHOP_Z (-16.0f)
+
+typedef struct { float x, z; int stage; float t; int type; } Plot;
+typedef struct { float x, z, tx, tz, ang, t, prod; } Animal;
+
+static const char *cropName[NTYPES] = { "Tomate", "Trigo", "Milho", "Cenoura" };
+static const int   cropSeed[NTYPES] = { 5, 3, 8, 6 };
+static const int   cropSell[NTYPES] = { 12, 7, 22, 15 };
+static const float cropGrow[NTYPES] = { 12.0f, 8.0f, 16.0f, 14.0f };
+static const int   shopPrice[4]     = { 80, 120, 90, 200 };
+
 static Plot plots[NPLOTS];
+static Animal chick[NCHICK], cow[NCOW], pig[NPIG];
 static float treeX[NTREES], treeZ[NTREES], treeH[NTREES];
 static float px = 0, pz = 0, pang = 0, cam = 0;
-static int money = 50, seeds = 5, crops = 0, showHelp = 1;
+static int money = 50, selCrop = 0, showHelp = 1;
+static int seeds[NTYPES] = { 5, 5, 0, 0 };
+static int crops[NTYPES];
+static int eggs, milk, meat, coopEggs, penMilk, penMeat;
+static int boots, fert, feed, landUp;
+static int raining = 0;
+static float weatherT = 30.0f;
+static int mode = 0, menuSel = 0;      /* mode: 0 jogo, 1 menu, 2 loja */
+static char menuMsg[40] = "";
 static float gameTime = 0;
 static char msg[64] = "";
 static float msgTimer = 0;
 
 static const float MKT_X = 0.0f, MKT_Z = -14.0f;
-
-typedef struct { float x, z, tx, tz, ang, t, egg; } Chicken;
-static Chicken chick[NCHICK];
-static int eggs = 0, coopEggs = 0;
-static int raining = 0;
-static float weatherT = 30.0f;
-static int paused = 0, menuSel = 0;
-static char menuMsg[40] = "";
 
 static unsigned int seed_rng = 12345;
 static float frand(void) {
@@ -157,28 +250,42 @@ static float frand(void) {
     return (float)((seed_rng >> 8) & 0xFFFF) / 65535.0f;
 }
 
+static float dist2d(float ax, float az, float bx, float bz) {
+    float dx = ax - bx, dz = az - bz;
+    return sqrtf(dx * dx + dz * dz);
+}
+
+static int nplots(void) { return landUp ? NPLOTS : 12; }
+
+static void init_animals(Animal *a, int n, float cx, float cz, float half) {
+    for (int i = 0; i < n; i++) {
+        a[i].x = cx + (frand() * 2 - 1) * half;
+        a[i].z = cz + (frand() * 2 - 1) * half;
+        a[i].tx = a[i].x; a[i].tz = a[i].z;
+        a[i].ang = frand() * 6.28f;
+        a[i].t = frand() * 3.0f;
+        a[i].prod = frand() * 20.0f;
+    }
+}
+
 static void init_world(void) {
     for (int i = 0; i < NPLOTS; i++) {
-        plots[i].x = 8.0f + (i % 4) * 4.0f;
-        plots[i].z = -4.0f + (i / 4) * 4.0f;
-        plots[i].stage = 0; plots[i].t = 0;
+        if (i < 12) { plots[i].x = 8.0f + (i % 4) * 4.0f; plots[i].z = -4.0f + (i / 4) * 4.0f; }
+        else { int j = i - 12; plots[i].x = 8.0f + (j % 4) * 4.0f; plots[i].z = 12.0f + (j / 4) * 4.0f; }
+        plots[i].stage = 0; plots[i].t = 0; plots[i].type = 0;
     }
     for (int i = 0; i < NTREES; i++) {
         float x, z;
         do {
             x = (frand() * 2 - 1) * (WORLD - 3);
             z = (frand() * 2 - 1) * (WORLD - 3);
-        } while (sqrtf(x*x + z*z) < 30.0f);
+        } while (dist2d(x, z, 0, 0) < 30.0f || dist2d(x, z, COW_X, COW_Z) < 14.0f ||
+                 dist2d(x, z, PEN_X, PEN_Z) < 14.0f || dist2d(x, z, SHOP_X, SHOP_Z) < 10.0f);
         treeX[i] = x; treeZ[i] = z; treeH[i] = 3.0f + frand() * 3.0f;
     }
-    for (int i = 0; i < NCHICK; i++) {
-        chick[i].x = PEN_X + (frand() * 2 - 1) * 6.0f;
-        chick[i].z = PEN_Z + (frand() * 2 - 1) * 6.0f;
-        chick[i].tx = chick[i].x; chick[i].tz = chick[i].z;
-        chick[i].ang = frand() * 6.28f;
-        chick[i].t = frand() * 3.0f;
-        chick[i].egg = frand() * 25.0f;
-    }
+    init_animals(chick, NCHICK, PEN_X, PEN_Z, 6.0f);
+    init_animals(cow, NCOW, COW_X, COW_Z, 6.0f);
+    init_animals(pig, NPIG, COW_X, COW_Z, 6.0f);
 }
 
 static void say(const char *s) {
@@ -192,18 +299,24 @@ static void say(const char *s) {
 
 typedef struct {
     unsigned int magic; int version;
-    int money, seeds, crops, eggs, coopEggs, raining;
+    int money, selCrop, eggs, milk, meat, coopEggs, penMilk, penMeat, raining;
+    int boots, fert, feed, landUp, musicOn;
+    int seeds[NTYPES], crops[NTYPES];
     float px, pz, cam, gameTime, weatherT;
-    int stage[NPLOTS]; float ptime[NPLOTS];
+    int stage[NPLOTS], ptype[NPLOTS]; float ptime[NPLOTS];
 } SaveData;
 
 static int save_game(void) {
     SaveData d; memset(&d, 0, sizeof(d));
-    d.magic = SAVE_MAGIC; d.version = 1;
-    d.money = money; d.seeds = seeds; d.crops = crops; d.eggs = eggs;
-    d.coopEggs = coopEggs; d.raining = raining;
+    d.magic = SAVE_MAGIC; d.version = 2;
+    d.money = money; d.selCrop = selCrop; d.eggs = eggs; d.milk = milk; d.meat = meat;
+    d.coopEggs = coopEggs; d.penMilk = penMilk; d.penMeat = penMeat; d.raining = raining;
+    d.boots = boots; d.fert = fert; d.feed = feed; d.landUp = landUp; d.musicOn = musicOn;
+    for (int i = 0; i < NTYPES; i++) { d.seeds[i] = seeds[i]; d.crops[i] = crops[i]; }
     d.px = px; d.pz = pz; d.cam = cam; d.gameTime = gameTime; d.weatherT = weatherT;
-    for (int i = 0; i < NPLOTS; i++) { d.stage[i] = plots[i].stage; d.ptime[i] = plots[i].t; }
+    for (int i = 0; i < NPLOTS; i++) {
+        d.stage[i] = plots[i].stage; d.ptype[i] = plots[i].type; d.ptime[i] = plots[i].t;
+    }
     sceIoMkdir("ms0:/PSP", 0777);
     sceIoMkdir("ms0:/PSP/SAVEDATA", 0777);
     sceIoMkdir(SAVE_DIR, 0777);
@@ -220,40 +333,87 @@ static int load_game(void) {
     if (fd < 0) return 0;
     int r = sceIoRead(fd, &d, sizeof(d));
     sceIoClose(fd);
-    if (r != (int)sizeof(d) || d.magic != SAVE_MAGIC || d.version != 1) return 0;
-    money = d.money; seeds = d.seeds; crops = d.crops; eggs = d.eggs;
-    coopEggs = d.coopEggs; raining = d.raining;
+    if (r != (int)sizeof(d) || d.magic != SAVE_MAGIC || d.version != 2) return 0;
+    money = d.money; selCrop = d.selCrop; eggs = d.eggs; milk = d.milk; meat = d.meat;
+    coopEggs = d.coopEggs; penMilk = d.penMilk; penMeat = d.penMeat; raining = d.raining;
+    boots = d.boots; fert = d.fert; feed = d.feed; landUp = d.landUp; musicOn = d.musicOn;
+    if (selCrop < 0 || selCrop >= NTYPES) selCrop = 0;
+    for (int i = 0; i < NTYPES; i++) { seeds[i] = d.seeds[i]; crops[i] = d.crops[i]; }
     px = d.px; pz = d.pz; cam = d.cam; gameTime = d.gameTime; weatherT = d.weatherT;
     for (int i = 0; i < NPLOTS; i++) {
-        plots[i].stage = d.stage[i]; plots[i].t = d.ptime[i];
+        plots[i].stage = d.stage[i]; plots[i].type = d.ptype[i]; plots[i].t = d.ptime[i];
         if (plots[i].stage < 0 || plots[i].stage > 3) plots[i].stage = 0;
+        if (plots[i].type < 0 || plots[i].type >= NTYPES) plots[i].type = 0;
     }
     return 1;
 }
 
+/* ---------- menus ---------- */
 static void menu_update(unsigned int pressed) {
-    if (pressed & PSP_CTRL_UP)   menuSel = (menuSel + 3) % 4;
-    if (pressed & PSP_CTRL_DOWN) menuSel = (menuSel + 1) % 4;
-    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE)) { paused = 0; return; }
+    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 4) % 5; play_sfx(4); }
+    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 5; play_sfx(4); }
+    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE)) { mode = 0; return; }
     if (pressed & PSP_CTRL_CROSS) {
-        if (menuSel == 0) paused = 0;
-        else if (menuSel == 1) {
+        if (menuSel == 0) mode = 0;
+        else if (menuSel == 1) { musicOn = !musicOn; play_sfx(4); }
+        else if (menuSel == 2) {
             strcpy(menuMsg, save_game() ? "Jogo salvo!" : "Erro ao salvar!");
-        } else if (menuSel == 2) {
+        } else if (menuSel == 3) {
             if (save_game()) running = 0;
             else strcpy(menuMsg, "Erro ao salvar!");
         } else running = 0;
     }
 }
 
+static int shop_owned(int i) { return i == 0 ? boots : i == 1 ? fert : i == 2 ? feed : landUp; }
+
+static void shop_update(unsigned int pressed) {
+    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 4) % 5; play_sfx(4); }
+    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 5; play_sfx(4); }
+    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) { mode = 0; return; }
+    if (pressed & PSP_CTRL_CROSS) {
+        if (menuSel == 4) { mode = 0; return; }
+        if (shop_owned(menuSel)) { strcpy(menuMsg, "Voce ja comprou!"); play_sfx(5); }
+        else if (money < shopPrice[menuSel]) { strcpy(menuMsg, "Dinheiro insuficiente!"); play_sfx(5); }
+        else {
+            money -= shopPrice[menuSel];
+            if (menuSel == 0) boots = 1;
+            else if (menuSel == 1) fert = 1;
+            else if (menuSel == 2) feed = 1;
+            else landUp = 1;
+            strcpy(menuMsg, "Comprado!"); play_sfx(3);
+        }
+    }
+}
+
+/* ---------- logica ---------- */
+static int near_area(float cx, float cz) { return fabsf(px - cx) < 9.0f && fabsf(pz - cz) < 9.0f; }
+static int at_market(void) { return dist2d(px, pz, MKT_X, MKT_Z) < 6.0f; }
+static int near_shop(void) { return dist2d(px, pz, SHOP_X, SHOP_Z) < 6.0f; }
+
 static int nearest_plot(void) {
     int best = -1; float bd = 3.0f;
-    for (int i = 0; i < NPLOTS; i++) {
-        float dx = plots[i].x - px, dz = plots[i].z - pz;
-        float d = sqrtf(dx*dx + dz*dz);
+    for (int i = 0; i < nplots(); i++) {
+        float d = dist2d(plots[i].x, plots[i].z, px, pz);
         if (d < bd) { bd = d; best = i; }
     }
     return best;
+}
+
+static void animal_wander(Animal *a, float cx, float cz, float half, float speed, float dt) {
+    a->t -= dt;
+    if (a->t <= 0) {
+        a->tx = cx + (frand() * 2 - 1) * half;
+        a->tz = cz + (frand() * 2 - 1) * half;
+        a->t = 2.0f + frand() * 4.0f;
+    }
+    float dx = a->tx - a->x, dz = a->tz - a->z;
+    float d = sqrtf(dx * dx + dz * dz);
+    if (d > 0.2f) {
+        a->x += dx / d * speed * dt;
+        a->z += dz / d * speed * dt;
+        a->ang = atan2f(dx, dz);
+    }
 }
 
 static void update(float dt, const SceCtrlData *pad, unsigned int pressed) {
@@ -270,7 +430,7 @@ static void update(float dt, const SceCtrlData *pad, unsigned int pressed) {
         float fx = sinf(cam), fz = cosf(cam);
         float rx = -cosf(cam), rz = sinf(cam);
         float mx = fx * (-dy) + rx * dx, mz = fz * (-dy) + rz * dx;
-        float speed = 9.0f * dt;
+        float speed = (boots ? 12.5f : 9.0f) * dt;
         px += mx * speed; pz += mz * speed;
         pang = atan2f(mx, mz);
         if (px < -WORLD) px = -WORLD;
@@ -285,72 +445,87 @@ static void update(float dt, const SceCtrlData *pad, unsigned int pressed) {
         weatherT = raining ? (15.0f + frand() * 15.0f) : (40.0f + frand() * 40.0f);
         say(raining ? "Comecou a chover! Plantas crescem 2x." : "A chuva parou.");
     }
-    float gm = raining ? 2.0f : 1.0f;
+    float gm = (raining ? 2.0f : 1.0f) * (fert ? 1.5f : 1.0f);
+    float fm = feed ? 1.5f : 1.0f;
 
     for (int i = 0; i < NCHICK; i++) {
-        Chicken *c = &chick[i];
-        c->t -= dt;
-        if (c->t <= 0) {
-            c->tx = PEN_X + (frand() * 2 - 1) * 6.5f;
-            c->tz = PEN_Z + (frand() * 2 - 1) * 6.5f;
-            c->t = 2.0f + frand() * 4.0f;
-        }
-        float cdx = c->tx - c->x, cdz = c->tz - c->z;
-        float cd = sqrtf(cdx * cdx + cdz * cdz);
-        if (cd > 0.2f) {
-            c->x += cdx / cd * 1.2f * dt;
-            c->z += cdz / cd * 1.2f * dt;
-            c->ang = atan2f(cdx, cdz);
-        }
-        c->egg += dt;
-        if (c->egg >= 25.0f) { c->egg = 0; if (coopEggs < 24) coopEggs++; }
+        animal_wander(&chick[i], PEN_X, PEN_Z, 6.5f, 1.2f, dt);
+        chick[i].prod += dt * fm;
+        if (chick[i].prod >= 25.0f) { chick[i].prod = 0; if (coopEggs < 24) coopEggs++; }
+    }
+    for (int i = 0; i < NCOW; i++) {
+        animal_wander(&cow[i], COW_X, COW_Z, 6.5f, 0.8f, dt);
+        cow[i].prod += dt * fm;
+        if (cow[i].prod >= 40.0f) { cow[i].prod = 0; if (penMilk < 12) penMilk++; }
+    }
+    for (int i = 0; i < NPIG; i++) {
+        animal_wander(&pig[i], COW_X, COW_Z, 6.5f, 1.0f, dt);
+        pig[i].prod += dt * fm;
+        if (pig[i].prod >= 60.0f) { pig[i].prod = 0; if (penMeat < 12) penMeat++; }
     }
 
-    for (int i = 0; i < NPLOTS; i++) {
+    for (int i = 0; i < nplots(); i++) {
         if (plots[i].stage >= 1 && plots[i].stage < 3) {
             plots[i].t += dt * gm;
-            if (plots[i].t >= 12.0f) { plots[i].t = 0; plots[i].stage++; }
+            if (plots[i].t >= cropGrow[plots[i].type]) { plots[i].t = 0; plots[i].stage++; }
         }
     }
 
+    if (pressed & PSP_CTRL_LEFT)  { selCrop = (selCrop + NTYPES - 1) % NTYPES; play_sfx(4); }
+    if (pressed & PSP_CTRL_RIGHT) { selCrop = (selCrop + 1) % NTYPES; play_sfx(4); }
     if (pressed & PSP_CTRL_SELECT) showHelp = !showHelp;
-    if (pressed & PSP_CTRL_START) { paused = 1; menuSel = 0; menuMsg[0] = 0; return; }
-
-    if (pressed & PSP_CTRL_TRIANGLE) {
-        if (fabsf(px - PEN_X) < 9.0f && fabsf(pz - PEN_Z) < 9.0f) {
-            if (coopEggs > 0) {
-                eggs += coopEggs; coopEggs = 0; say("Coletou os ovos!");
-            } else say("Sem ovos por enquanto.");
-        } else say("Va ate o galinheiro (a frente).");
-    }
+    if (pressed & PSP_CTRL_START) { mode = 1; menuSel = 0; menuMsg[0] = 0; return; }
 
     if (pressed & PSP_CTRL_CROSS) {
         int i = nearest_plot();
-        if (i < 0) say("Chegue perto de um canteiro.");
+        if (i < 0) { say("Chegue perto de um canteiro."); play_sfx(5); }
         else if (plots[i].stage == 0) {
-            if (seeds > 0) { seeds--; plots[i].stage = 1; plots[i].t = 0; say("Plantou!"); }
-            else say("Sem sementes! Compre no mercado.");
+            if (seeds[selCrop] > 0) {
+                seeds[selCrop]--; plots[i].stage = 1; plots[i].t = 0; plots[i].type = selCrop;
+                say("Plantou!"); play_sfx(1);
+            } else { say("Sem sementes deste tipo!"); play_sfx(5); }
         } else if (plots[i].stage == 3) {
-            plots[i].stage = 0; crops++; say("Colheu!");
+            crops[plots[i].type]++; plots[i].stage = 0; say("Colheu!"); play_sfx(2);
         } else say("Ainda crescendo...");
     }
 
-    float mdx = px - MKT_X, mdz = pz - MKT_Z;
-    int atMarket = sqrtf(mdx*mdx + mdz*mdz) < 6.0f;
     if (pressed & PSP_CTRL_SQUARE) {
-        if (!atMarket) say("Va ate o mercado.");
-        else if (money >= 5) { money -= 5; seeds++; say("Comprou 1 semente (-$5)"); }
-        else say("Dinheiro insuficiente.");
+        if (!at_market()) { say("Va ate o mercado."); play_sfx(5); }
+        else if (money >= cropSeed[selCrop]) {
+            money -= cropSeed[selCrop]; seeds[selCrop]++;
+            say("Comprou 1 semente!"); play_sfx(1);
+        } else { say("Dinheiro insuficiente."); play_sfx(5); }
     }
+
     if (pressed & PSP_CTRL_CIRCLE) {
-        if (!atMarket) say("Va ate o mercado.");
-        else if (crops > 0 || eggs > 0) {
-            money += crops * 12 + eggs * 4; crops = 0; eggs = 0; say("Vendeu tudo!");
+        if (!at_market()) { say("Va ate o mercado."); play_sfx(5); }
+        else {
+            int total = eggs * 4 + milk * 9 + meat * 20;
+            for (int t = 0; t < NTYPES; t++) total += crops[t] * cropSell[t];
+            if (total > 0) {
+                money += total;
+                for (int t = 0; t < NTYPES; t++) crops[t] = 0;
+                eggs = milk = meat = 0;
+                char b[48]; sprintf(b, "Vendeu tudo! +$%d", total); say(b); play_sfx(3);
+            } else { say("Nada para vender."); play_sfx(5); }
         }
-        else say("Nada para vender.");
+    }
+
+    if (pressed & PSP_CTRL_TRIANGLE) {
+        if (near_shop()) { mode = 2; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
+        else if (near_area(PEN_X, PEN_Z)) {
+            if (coopEggs > 0) { eggs += coopEggs; coopEggs = 0; say("Coletou os ovos!"); play_sfx(2); }
+            else say("Sem ovos por enquanto.");
+        } else if (near_area(COW_X, COW_Z)) {
+            if (penMilk + penMeat > 0) {
+                milk += penMilk; meat += penMeat; penMilk = penMeat = 0;
+                say("Coletou leite e carne!"); play_sfx(2);
+            } else say("Nada para coletar ainda.");
+        } else say("Va ao galinheiro, curral ou loja.");
     }
 }
 
+/* ---------- desenho do mundo ---------- */
 static void fence_line(float x1, float z1, float x2, float z2) {
     float dx = x2 - x1, dz = z2 - z1;
     float len = sqrtf(dx * dx + dz * dz);
@@ -362,6 +537,68 @@ static void fence_line(float x1, float z1, float x2, float z2) {
     box(mx, 0.75f, mz, 0.12f, 0.12f, len, ang, 0xff3a6a9a);
     for (int i = 0; i <= n; i++)
         box(x1 + dx * i / n, 0, z1 + dz * i / n, 0.25f, 1.0f, 0.25f, 0, 0xff2a4a70);
+}
+
+static void fence_rect(float cx, float cz, float half) {
+    fence_line(cx - half, cz - half, cx + half, cz - half);
+    fence_line(cx + half, cz - half, cx + half, cz + half);
+    fence_line(cx + half, cz + half, cx - half, cz + half);
+    fence_line(cx - half, cz + half, cx - half, cz - half);
+}
+
+static void draw_crop(const Plot *p) {
+    float x = p->x, z = p->z;
+    if (p->stage == 0) return;
+    if (p->stage == 1) { box(x, 0.15f, z, 0.4f, 0.4f, 0.4f, 0, 0xff30c030); return; }
+    int ripe = (p->stage == 3);
+    switch (p->type) {
+    case 0: /* tomate */
+        if (!ripe) box(x, 0.15f, z, 0.8f, 1.0f, 0.8f, 0, 0xff20b040);
+        else {
+            box(x, 0.15f, z, 1.0f, 1.2f, 1.0f, 0, 0xff20a030);
+            box(x, 1.2f, z, 0.9f, 0.7f, 0.9f, 0, 0xff1e50e8);
+        }
+        break;
+    case 1: /* trigo */
+        for (int k = 0; k < 4; k++) {
+            float ox = (k % 2) ? 0.6f : -0.6f, oz = (k / 2) ? 0.6f : -0.6f;
+            if (!ripe) box(x + ox, 0.15f, z + oz, 0.25f, 1.2f, 0.25f, 0, 0xff40c070);
+            else       box(x + ox, 0.15f, z + oz, 0.25f, 1.6f, 0.25f, 0, 0xff30b0e0);
+        }
+        break;
+    case 2: /* milho */
+        if (!ripe) box(x, 0.15f, z, 0.5f, 1.8f, 0.5f, 0, 0xff30a030);
+        else {
+            box(x, 0.15f, z, 0.5f, 2.4f, 0.5f, 0, 0xff30a030);
+            box(x + 0.35f, 1.2f, z, 0.3f, 0.9f, 0.3f, 0, 0xff30e0ff);
+        }
+        break;
+    default: /* cenoura */
+        box(x, 0.15f, z, 0.8f, ripe ? 0.7f : 0.6f, 0.8f, 0, 0xff30b040);
+        if (ripe) box(x, 0.1f, z, 0.45f, 0.35f, 0.45f, 0, 0xff2080ff);
+        break;
+    }
+}
+
+static void leg(const Animal *a, float lx, float lz, float w, float h, unsigned int col) {
+    float c = cosf(a->ang), s = sinf(a->ang);
+    box(a->x + lx * c + lz * s, 0, a->z - lx * s + lz * c, w, h, w, a->ang, col);
+}
+
+static void draw_cow(const Animal *a) {
+    box(a->x, 0.5f, a->z, 1.1f, 0.9f, 1.8f, a->ang, 0xfff0f0f0);
+    box(a->x, 1.38f, a->z, 0.6f, 0.1f, 0.8f, a->ang, 0xff202020);
+    box(a->x + sinf(a->ang) * 1.1f, 0.9f, a->z + cosf(a->ang) * 1.1f, 0.6f, 0.6f, 0.6f, a->ang, 0xff6080a0);
+    leg(a, -0.35f, -0.6f, 0.2f, 0.5f, 0xff303030); leg(a, 0.35f, -0.6f, 0.2f, 0.5f, 0xff303030);
+    leg(a, -0.35f, 0.6f, 0.2f, 0.5f, 0xff303030);  leg(a, 0.35f, 0.6f, 0.2f, 0.5f, 0xff303030);
+}
+
+static void draw_pig(const Animal *a) {
+    box(a->x, 0.3f, a->z, 0.9f, 0.6f, 1.3f, a->ang, 0xffb0a0ff);
+    box(a->x + sinf(a->ang) * 0.8f, 0.35f, a->z + cosf(a->ang) * 0.8f, 0.6f, 0.5f, 0.5f, a->ang, 0xffb0a0ff);
+    box(a->x + sinf(a->ang) * 1.1f, 0.4f, a->z + cosf(a->ang) * 1.1f, 0.3f, 0.25f, 0.15f, a->ang, 0xff8080e0);
+    leg(a, -0.3f, -0.4f, 0.18f, 0.3f, 0xff8080e0); leg(a, 0.3f, -0.4f, 0.18f, 0.3f, 0xff8080e0);
+    leg(a, -0.3f, 0.4f, 0.18f, 0.3f, 0xff8080e0);  leg(a, 0.3f, 0.4f, 0.18f, 0.3f, 0xff8080e0);
 }
 
 static void draw_scene(void) {
@@ -396,50 +633,49 @@ static void draw_scene(void) {
     sceGuAmbient(0xff000000 | ((unsigned int)(90*b) << 16) | ((unsigned int)(90*b) << 8) | (unsigned int)(90*b));
     sceGuColorMaterial(GU_AMBIENT | GU_DIFFUSE);
 
-    /* chao */
     draw_ground();
-    /* estrada ate o mercado */
     box(0, 0.02f, -7, 3, 0.05f, 14, 0, 0xff6f8fa8);
 
     /* canteiros e plantas */
-    for (int i = 0; i < NPLOTS; i++) {
-        Plot *p = &plots[i];
-        box(p->x, 0.03f, p->z, 3.0f, 0.15f, 3.0f, 0, 0xff2a4a6b);
-        if (p->stage == 1) box(p->x, 0.15f, p->z, 0.4f, 0.4f, 0.4f, 0, 0xff30c030);
-        else if (p->stage == 2) box(p->x, 0.15f, p->z, 0.8f, 1.0f, 0.8f, 0, 0xff20b040);
-        else if (p->stage == 3) {
-            box(p->x, 0.15f, p->z, 1.0f, 1.2f, 1.0f, 0, 0xff20a030);
-            box(p->x, 1.2f, p->z, 0.9f, 0.7f, 0.9f, 0, 0xff1e50e8); /* fruto */
-        }
+    for (int i = 0; i < nplots(); i++) {
+        box(plots[i].x, 0.03f, plots[i].z, 3.0f, 0.15f, 3.0f, 0, 0xff2a4a6b);
+        draw_crop(&plots[i]);
+    }
+    fence_line(5, -8, 23, -8);
+    fence_line(23, -8, 23, 8);
+    fence_line(23, 8, 5, 8);
+    fence_line(5, 8, 5, -8);
+    if (landUp) {
+        fence_line(5, 10, 23, 10);
+        fence_line(23, 10, 23, 24);
+        fence_line(23, 24, 5, 24);
+        fence_line(5, 24, 5, 10);
     }
 
-    /* celeiro */
+    /* celeiro e casa */
     box(-14, 0, -10, 8, 4.5f, 6, 0, 0xff2828b0);
     box(-14, 4.5f, -10, 8.4f, 1.5f, 6.4f, 0, 0xff303030);
-    /* casa */
     box(-14, 0, 8, 6, 3.5f, 6, 0, 0xffa8c8e8);
     box(-14, 3.5f, 8, 6.6f, 1.2f, 6.6f, 0, 0xff204080);
+
     /* mercado */
     box(MKT_X - 2, 0, MKT_Z, 0.4f, 3, 0.4f, 0, 0xff204060);
     box(MKT_X + 2, 0, MKT_Z, 0.4f, 3, 0.4f, 0, 0xff204060);
     box(MKT_X, 1.0f, MKT_Z, 4.4f, 0.8f, 1.5f, 0, 0xff3090d0);
     box(MKT_X, 3.0f, MKT_Z, 5.5f, 0.3f, 3.0f, 0, 0xff2020d0);
 
-    /* cerca da plantacao */
-    fence_line(5, -8, 23, -8);
-    fence_line(23, -8, 23, 8);
-    fence_line(23, 8, 5, 8);
-    fence_line(5, 8, 5, -8);
+    /* loja de melhorias */
+    box(SHOP_X, 0, SHOP_Z, 6.0f, 3.2f, 4.0f, 0, 0xffc06020);
+    box(SHOP_X, 3.2f, SHOP_Z, 6.6f, 0.6f, 4.6f, 0, 0xff2020a0);
+    box(SHOP_X, 3.8f, SHOP_Z + 2.0f, 3.0f, 1.0f, 0.2f, 0, 0xff30e0ff);
+    box(SHOP_X, 0, SHOP_Z + 2.05f, 1.2f, 2.0f, 0.15f, 0, 0xff203050);
 
-    /* galinheiro: cerca, casinha e galinhas */
-    fence_line(PEN_X - 8, PEN_Z - 8, PEN_X + 8, PEN_Z - 8);
-    fence_line(PEN_X + 8, PEN_Z - 8, PEN_X + 8, PEN_Z + 8);
-    fence_line(PEN_X + 8, PEN_Z + 8, PEN_X - 8, PEN_Z + 8);
-    fence_line(PEN_X - 8, PEN_Z + 8, PEN_X - 8, PEN_Z - 8);
+    /* galinheiro */
+    fence_rect(PEN_X, PEN_Z, 8.0f);
     box(PEN_X - 5, 0, PEN_Z - 5, 3.0f, 2.0f, 3.0f, 0, 0xff4070c0);
     box(PEN_X - 5, 2.0f, PEN_Z - 5, 3.4f, 0.8f, 3.4f, 0, 0xff202080);
     for (int i = 0; i < NCHICK; i++) {
-        Chicken *c = &chick[i];
+        Animal *c = &chick[i];
         box(c->x, 0.15f, c->z, 0.5f, 0.4f, 0.7f, c->ang, 0xfff0f0f0);
         box(c->x + sinf(c->ang) * 0.4f, 0.45f, c->z + cosf(c->ang) * 0.4f,
             0.25f, 0.3f, 0.25f, c->ang, 0xff2020e0);
@@ -447,6 +683,19 @@ static void draw_scene(void) {
     for (int i = 0; i < coopEggs && i < 24; i++)
         box(PEN_X + 3.0f + (i % 6) * 0.5f, 0.05f, PEN_Z + 6.0f - (i / 6) * 0.5f,
             0.25f, 0.3f, 0.25f, 0, 0xffd0f0ff);
+
+    /* curral (vacas e porcos) */
+    fence_rect(COW_X, COW_Z, 8.0f);
+    box(COW_X - 5, 0, COW_Z - 5, 4.0f, 2.5f, 3.0f, 0, 0xff2a3a90);
+    box(COW_X - 5, 2.5f, COW_Z - 5, 4.4f, 0.8f, 3.4f, 0, 0xff202020);
+    for (int i = 0; i < NCOW; i++) draw_cow(&cow[i]);
+    for (int i = 0; i < NPIG; i++) draw_pig(&pig[i]);
+    for (int i = 0; i < penMilk && i < 12; i++)
+        box(COW_X + 2.0f + (i % 6) * 0.5f, 0.05f, COW_Z + 6.5f - (i / 6) * 0.5f,
+            0.3f, 0.5f, 0.3f, 0, 0xfff8f8f8);
+    for (int i = 0; i < penMeat && i < 12; i++)
+        box(COW_X - 3.0f + (i % 6) * 0.5f, 0.05f, COW_Z + 6.5f - (i / 6) * 0.5f,
+            0.35f, 0.25f, 0.35f, 0, 0xff4040d0);
 
     /* arvores */
     for (int i = 0; i < NTREES; i++) {
@@ -459,7 +708,7 @@ static void draw_scene(void) {
     /* jogador */
     box(px, 0.0f, pz, 0.9f, 1.4f, 0.6f, pang, 0xffd04020);
     box(px, 1.4f, pz, 0.6f, 0.6f, 0.6f, pang, 0xff90b8f0);
-    box(px, 2.0f, pz, 0.8f, 0.15f, 0.8f, pang, 0xff40a0e0); /* chapeu */
+    box(px, 2.0f, pz, 0.8f, 0.15f, 0.8f, pang, 0xff40a0e0);
 
     /* chuva */
     if (raining) {
@@ -622,11 +871,6 @@ static void ui_shadow(int x, int y, int sc, unsigned int color, const char *s) {
     ui_text(x, y, sc, color, s);
 }
 
-static int at_market(void) {
-    float dx = px - MKT_X, dz = pz - MKT_Z;
-    return sqrtf(dx * dx + dz * dz) < 6.0f;
-}
-
 static void draw_ui(void) {
     char buf[96];
     sceGuDisable(GU_DEPTH_TEST);
@@ -634,62 +878,94 @@ static void draw_ui(void) {
     sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
 
     /* HUD */
-    rect2d(0, 0, 372, 40, 0x90000000);
-    sprintf(buf, "$%d  Sem:%d  Col:%d  Ovos:%d", money, seeds, crops, eggs);
+    rect2d(0, 0, 372, 58, 0x90000000);
+    sprintf(buf, "$%d Ovo:%d Leite:%d Carne:%d", money, eggs, milk, meat);
     ui_shadow(4, 3, 2, 0xff40e0ff, buf);
-    sprintf(buf, "Dia %d  %s  Galinheiro:%d", (int)(gameTime / 150.0f) + 1,
-            raining ? "CHUVA" : "Sol", coopEggs);
+    sprintf(buf, "< %s >  Sem:%d  Col:%d", cropName[selCrop], seeds[selCrop], crops[selCrop]);
     ui_shadow(4, 21, 2, 0xffffffff, buf);
+    sprintf(buf, "Dia %d  %s", (int)(gameTime / 150.0f) + 1, raining ? "CHUVA" : "Sol");
+    ui_shadow(4, 39, 2, 0xffc0ffc0, buf);
 
-    if (showHelp && !paused) {
-        static const char *help[5] = {
-            "Analog: andar   L/R: camera",
-            "X: plantar / colher",
-            "Quad: comprar semente (mercado)",
-            "Circ: vender tudo (mercado)",
-            "Tri: ovos   START: menu   SELECT: ajuda"
-        };
-        rect2d(0, 42, 262, 92, 0x90000000);
-        for (int i = 0; i < 5; i++) ui_shadow(4, 46 + i * 9, 1, 0xffffffff, help[i]);
-    }
-
-    if (!paused) {
+    if (mode == 0) {
+        if (showHelp) {
+            static const char *help[5] = {
+                "Analog:andar  L/R:camera  < >:semente",
+                "X:plantar/colher  Quad:comprar semente",
+                "Circ:vender tudo (mercado)",
+                "Tri:coletar (galinheiro/curral) ou loja",
+                "START:menu  SELECT:ajuda"
+            };
+            rect2d(0, 60, 262, 110, 0x90000000);
+            for (int i = 0; i < 5; i++) ui_shadow(4, 64 + i * 9, 1, 0xffffffff, help[i]);
+        }
         if (msgTimer > 0) {
             int w = (int)strlen(msg) * 12, x = (480 - w) / 2;
-            rect2d(x - 6, 212, x + w + 6, 234, 0xa0000000);
-            ui_shadow(x, 216, 2, 0xffffffff, msg);
+            rect2d(x - 6, 184, x + w + 6, 206, 0xa0000000);
+            ui_shadow(x, 188, 2, 0xffffffff, msg);
         }
-        const char *pr = NULL; char pb[48];
-        if (at_market()) pr = "MERCADO  Quad:comprar $5  Circ:vender";
-        else {
+        const char *pr = NULL; char pb[56], sub[56]; sub[0] = 0;
+        if (at_market()) {
+            pr = "MERCADO  Quad:comprar  Circ:vender";
+            sprintf(sub, "Semente %s: $%d   (< > troca o tipo)", cropName[selCrop], cropSeed[selCrop]);
+        } else if (near_shop()) {
+            pr = "LOJA  Tri: abrir";
+        } else {
             int i = nearest_plot();
             if (i >= 0) {
-                if (plots[i].stage == 0) pr = "X: plantar semente";
+                if (plots[i].stage == 0) { sprintf(pb, "X: plantar %s", cropName[selCrop]); pr = pb; }
                 else if (plots[i].stage == 3) pr = "X: colher";
                 else pr = "Crescendo...";
-            } else if (fabsf(px - PEN_X) < 9.0f && fabsf(pz - PEN_Z) < 9.0f) {
+            } else if (near_area(PEN_X, PEN_Z)) {
                 sprintf(pb, "Tri: coletar ovos (%d)", coopEggs); pr = pb;
+            } else if (near_area(COW_X, COW_Z)) {
+                sprintf(pb, "Tri: coletar leite:%d carne:%d", penMilk, penMeat); pr = pb;
             }
         }
         if (pr) {
             int w = (int)strlen(pr) * 12, x = (480 - w) / 2;
-            rect2d(x - 6, 242, x + w + 6, 266, 0xa0000000);
-            ui_shadow(x, 247, 2, 0xff40e0ff, pr);
+            int top = sub[0] ? 222 : 238;
+            rect2d(x - 6, top, x + w + 6, 266, 0xa0000000);
+            if (sub[0]) {
+                int w2 = (int)strlen(sub) * 6;
+                ui_shadow((480 - w2) / 2, 227, 1, 0xffc0c0c0, sub);
+            }
+            ui_shadow(x, 243, 2, 0xff40e0ff, pr);
         }
-    } else {
-        static const char *opt[4] = { "Continuar", "Salvar", "Salvar e sair", "Sair sem salvar" };
+    } else if (mode == 1) {
+        static const char *opt[5] = { "Continuar", "", "Salvar", "Salvar e sair", "Sair sem salvar" };
         rect2d(0, 0, 480, 272, 0x80000000);
-        rect2d(100, 60, 380, 208, 0xf060c0f0);
-        rect2d(104, 64, 376, 204, 0xf0201008);
-        ui_shadow(180, 70, 2, 0xff40e0ff, "== MENU ==");
-        for (int i = 0; i < 4; i++) {
-            int y = 94 + i * 20;
-            if (i == menuSel) rect2d(110, y - 3, 370, y + 17, 0xc0a06020);
-            sprintf(buf, "%s %s", i == menuSel ? ">" : " ", opt[i]);
-            ui_shadow(116, y, 2, 0xffffffff, buf);
+        rect2d(96, 40, 384, 228, 0xf060c0f0);
+        rect2d(100, 44, 380, 224, 0xf0201008);
+        ui_shadow(180, 50, 2, 0xff40e0ff, "== MENU ==");
+        for (int i = 0; i < 5; i++) {
+            int y = 76 + i * 20;
+            if (i == menuSel) rect2d(106, y - 3, 374, y + 17, 0xc0a06020);
+            if (i == 1) sprintf(buf, "%s Musica: %s", i == menuSel ? ">" : " ", musicOn ? "ligada" : "desligada");
+            else sprintf(buf, "%s %s", i == menuSel ? ">" : " ", opt[i]);
+            ui_shadow(110, y, 2, 0xffffffff, buf);
         }
-        ui_shadow(112, 176, 1, 0xffc0c0c0, "Cima/Baixo + X     START volta");
-        if (menuMsg[0]) ui_shadow(116, 186, 2, 0xff60ff60, menuMsg);
+        ui_shadow(108, 184, 1, 0xffc0c0c0, "Cima/Baixo + X     START volta");
+        if (menuMsg[0]) ui_shadow(110, 196, 2, 0xff60ff60, menuMsg);
+    } else {
+        static const char *nm[5] = { "Botas velozes", "Adubo (+50% cresc.)", "Racao (+50% animais)",
+                                     "Ampliar terreno (+12)", "Sair" };
+        rect2d(0, 0, 480, 272, 0x80000000);
+        rect2d(36, 36, 444, 246, 0xf060c0f0);
+        rect2d(40, 40, 440, 242, 0xf0201008);
+        ui_shadow(180, 46, 2, 0xff40e0ff, "== LOJA ==");
+        for (int i = 0; i < 5; i++) {
+            int y = 70 + i * 22;
+            if (i == menuSel) rect2d(46, y - 3, 434, y + 17, 0xc0a06020);
+            ui_shadow(56, y, 2, 0xffffffff, nm[i]);
+            if (i < 4) {
+                if (shop_owned(i)) ui_shadow(330, y, 2, 0xff60ff60, "COMPRADO");
+                else { sprintf(buf, "$%d", shopPrice[i]); ui_shadow(330, y, 2, 0xff40e0ff, buf); }
+            }
+        }
+        sprintf(buf, "Seu dinheiro: $%d", money);
+        ui_shadow(56, 184, 2, 0xffffffff, buf);
+        ui_shadow(56, 204, 1, 0xffc0c0c0, "Cima/Baixo + X comprar   START/O sair");
+        if (menuMsg[0]) ui_shadow(56, 218, 2, 0xff60ff60, menuMsg);
     }
 
     sceGuDisable(GU_BLEND);
@@ -706,6 +982,10 @@ int main(void) {
     build_ground();
     init_world();
     if (load_game()) say("Jogo carregado!");
+
+    int at = sceKernelCreateThread("audio", audio_thread, 0x12, 0x10000,
+                                   PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU, NULL);
+    if (at >= 0) sceKernelStartThread(at, 0, NULL);
 
     sceGuInit();
     sceGuStart(GU_DIRECT, list);
@@ -739,7 +1019,8 @@ int main(void) {
         unsigned int pressed = pad.Buttons & ~oldButtons;
         oldButtons = pad.Buttons;
 
-        if (paused) menu_update(pressed);
+        if (mode == 1) menu_update(pressed);
+        else if (mode == 2) shop_update(pressed);
         else update(dt, &pad, pressed);
 
         sceGuStart(GU_DIRECT, list);
