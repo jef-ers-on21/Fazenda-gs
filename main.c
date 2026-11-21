@@ -32,7 +32,7 @@ PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 #define NPLOTS  24
 #define NTREES  90
 #define NCHICK  8
-#define NDROPS  60
+#define NDROPS  40
 #define PEN_X   (-4.0f)
 #define PEN_Z   (16.0f)
 
@@ -211,7 +211,10 @@ static int audio_thread(SceSize args, void *argp) {
 #define NCOW   3
 #define NPIG   3
 #define NFRUIT 6
-#define NITEMS 9
+#define NITEMS 13
+#define NITEMS_OLD 9
+#define BARN_X (-14.0f)
+#define BARN_Z (-10.0f)
 #define COW_X  (-28.0f)
 #define COW_Z  (4.0f)
 #define SHOP_X (14.0f)
@@ -228,7 +231,8 @@ static int audio_thread(SceSize args, void *argp) {
 #define HALL_Z  (-58.0f)
 #define SEASON_LEN 300.0f
 
-enum { IT_OVO = 4, IT_LEITE = 5, IT_CARNE = 6, IT_PEIXE = 7, IT_FRUTA = 8 };
+enum { IT_TOMATE = 0, IT_TRIGO = 1, IT_OVO = 4, IT_LEITE = 5, IT_CARNE = 6, IT_PEIXE = 7, IT_FRUTA = 8,
+       IT_PAO = 9, IT_QUEIJO = 10, IT_SUCO = 11, IT_MOLHO = 12 };
 
 typedef struct { float x, z; int stage; float t; int type; } Plot;
 typedef struct { float x, z, tx, tz, ang, t, prod; } Animal;
@@ -238,9 +242,12 @@ typedef struct { int item, qty, reward; } Mission;
 static const char *cropName[NTYPES] = { "Tomate", "Trigo", "Milho", "Cenoura" };
 static const int   cropSeed[NTYPES] = { 5, 3, 8, 6 };
 static const float cropGrow[NTYPES] = { 12.0f, 8.0f, 16.0f, 14.0f };
-static const char *itemName[NITEMS] = { "Tomate", "Trigo", "Milho", "Cenoura", "Ovo", "Leite", "Carne", "Peixe", "Fruta" };
-static const int   itemSell[NITEMS] = { 12, 7, 22, 15, 4, 9, 20, 14, 10 };
+static const char *itemName[NITEMS] = { "Tomate", "Trigo", "Milho", "Cenoura", "Ovo", "Leite", "Carne", "Peixe", "Fruta", "Pao", "Queijo", "Suco", "Molho" };
+static const int   itemSell[NITEMS] = { 12, 7, 22, 15, 4, 9, 20, 14, 10, 30, 28, 40, 45 };
 static const int   shopPrice[4]     = { 80, 120, 90, 200 };
+static const int   recIn[4]         = { IT_TRIGO, IT_LEITE, IT_FRUTA, IT_TOMATE };
+static const int   recQty[4]        = { 3, 2, 3, 3 };
+static const int   recOut[4]        = { IT_PAO, IT_QUEIJO, IT_SUCO, IT_MOLHO };
 static const int   houseCost[3]     = { 0, 300, 800 };
 static const char *houseName[3]     = { "Cabana", "Casa", "Mansao" };
 static const char *seasonName[4]    = { "Primavera", "Verao", "Outono", "Inverno" };
@@ -357,12 +364,13 @@ typedef struct {
     unsigned int magic; int version;
     int money, selCrop, coopEggs, penMilk, penMeat, raining;
     int boots, fert, feed, landUp, musicOn, houseLvl, missionsDone;
-    int seeds[NTYPES], inv[NITEMS];
+    int seeds[NTYPES], inv[NITEMS_OLD];
     int mItem[3], mQty[3], mReward[3];
     float px, pz, cam, gameTime, weatherT;
     int stage[NPLOTS], ptype[NPLOTS]; float ptime[NPLOTS];
     float ftT[NFRUIT]; int ftRipe[NFRUIT];
 } SaveData;
+typedef struct { unsigned int magic; int inv2[4]; } SaveExtra;
 
 static int save_game(void) {
     SaveData d; memset(&d, 0, sizeof(d));
@@ -371,7 +379,7 @@ static int save_game(void) {
     d.penMeat = penMeat; d.raining = raining; d.boots = boots; d.fert = fert; d.feed = feed;
     d.landUp = landUp; d.musicOn = musicOn; d.houseLvl = houseLvl; d.missionsDone = missionsDone;
     for (int i = 0; i < NTYPES; i++) d.seeds[i] = seeds[i];
-    for (int i = 0; i < NITEMS; i++) d.inv[i] = inv[i];
+    for (int i = 0; i < NITEMS_OLD; i++) d.inv[i] = inv[i];
     for (int i = 0; i < 3; i++) { d.mItem[i] = mis[i].item; d.mQty[i] = mis[i].qty; d.mReward[i] = mis[i].reward; }
     d.px = px; d.pz = pz; d.cam = cam; d.gameTime = gameTime; d.weatherT = weatherT;
     for (int i = 0; i < NPLOTS; i++) { d.stage[i] = plots[i].stage; d.ptype[i] = plots[i].type; d.ptime[i] = plots[i].t; }
@@ -382,8 +390,11 @@ static int save_game(void) {
     int fd = sceIoOpen(SAVE_FILE, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
     if (fd < 0) return 0;
     int w = sceIoWrite(fd, &d, sizeof(d));
+    SaveExtra e; e.magic = SAVE_MAGIC;
+    for (int i = 0; i < 4; i++) e.inv2[i] = inv[NITEMS_OLD + i];
+    int w2 = sceIoWrite(fd, &e, sizeof(e));
     sceIoClose(fd);
-    return w == (int)sizeof(d);
+    return w == (int)sizeof(d) && w2 == (int)sizeof(e);
 }
 
 static int load_game(void) {
@@ -391,6 +402,7 @@ static int load_game(void) {
     int fd = sceIoOpen(SAVE_FILE, PSP_O_RDONLY, 0777);
     if (fd < 0) return 0;
     int r = sceIoRead(fd, &d, sizeof(d));
+    SaveExtra e; int r2 = sceIoRead(fd, &e, sizeof(e));
     sceIoClose(fd);
     if (r != (int)sizeof(d) || d.magic != SAVE_MAGIC || d.version != 3) return 0;
     money = d.money; selCrop = d.selCrop; coopEggs = d.coopEggs; penMilk = d.penMilk;
@@ -399,7 +411,9 @@ static int load_game(void) {
     if (selCrop < 0 || selCrop >= NTYPES) selCrop = 0;
     if (houseLvl < 1 || houseLvl > 3) houseLvl = 1;
     for (int i = 0; i < NTYPES; i++) seeds[i] = d.seeds[i];
-    for (int i = 0; i < NITEMS; i++) inv[i] = d.inv[i];
+    for (int i = 0; i < NITEMS_OLD; i++) inv[i] = d.inv[i];
+    if (r2 == (int)sizeof(e) && e.magic == SAVE_MAGIC)
+        for (int i = 0; i < 4; i++) inv[NITEMS_OLD + i] = e.inv2[i];
     for (int i = 0; i < 3; i++) {
         mis[i].item = d.mItem[i]; mis[i].qty = d.mQty[i]; mis[i].reward = d.mReward[i];
         if (mis[i].item < 0 || mis[i].item >= NITEMS || mis[i].qty < 1) new_mission(i);
@@ -420,6 +434,7 @@ static int at_market(void) { return NEAR(MKT_X, MKT_Z, 6.0f); }
 static int near_shop(void) { return NEAR(SHOP_X, SHOP_Z, 6.0f); }
 static int near_house(void) { return NEAR(HOUSE_X, HOUSE_Z + 3.0f, 6.0f); }
 static int near_hall(void) { return NEAR(HALL_X, HALL_Z + 3.0f, 8.0f); }
+static int near_barn(void) { return NEAR(BARN_X, BARN_Z + 3.5f, 6.5f); }
 
 static float lake_dist(float x, float z) {
     float dx = fabsf(x - LAKE_X) - LAKE_HX, dz = fabsf(z - LAKE_Z) - LAKE_HZ;
@@ -600,6 +615,24 @@ static void hall_update(unsigned int pressed) {
     }
 }
 
+static void barn_update(unsigned int pressed) {
+    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 4) % 5; play_sfx(4); }
+    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 5; play_sfx(4); }
+    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) { mode = 0; return; }
+    if (pressed & PSP_CTRL_CROSS) {
+        if (menuSel == 4) { mode = 0; return; }
+        if (inv[recIn[menuSel]] >= recQty[menuSel]) {
+            inv[recIn[menuSel]] -= recQty[menuSel];
+            inv[recOut[menuSel]]++;
+            sprintf(menuMsg, "Fabricou %s!", itemName[recOut[menuSel]]);
+            play_sfx(2);
+        } else {
+            sprintf(menuMsg, "Faltam %d %s!", recQty[menuSel] - inv[recIn[menuSel]], itemName[recIn[menuSel]]);
+            play_sfx(5);
+        }
+    }
+}
+
 static void update(float dt, const SceCtrlData *pad, unsigned int pressed) {
     gameTime += dt;
     if (msgTimer > 0) msgTimer -= dt;
@@ -703,6 +736,7 @@ static void update(float dt, const SceCtrlData *pad, unsigned int pressed) {
                 say(b); play_sfx(5);
             }
         } else if (near_hall()) { mode = 4; menuMsg[0] = 0; play_sfx(4); return; }
+        else if (near_barn()) { mode = 5; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
         else if (near_house()) { mode = 3; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
         else if (near_shop()) { mode = 2; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
         else if (near_area(PEN_X, PEN_Z)) {
@@ -829,9 +863,9 @@ static void fence_line(float x1, float z1, float x2, float z2) {
     float dx = x2 - x1, dz = z2 - z1;
     float len = sqrtf(dx * dx + dz * dz);
     float mx = (x1 + x2) * 0.5f, mz = (z1 + z2) * 0.5f;
-    if (dist2d(px, pz, mx, mz) > len * 0.5f + 55.0f) return;
+    if (dist2d(px, pz, mx, mz) > len * 0.5f + 45.0f) return;
     float ang = atan2f(dx, dz);
-    int n = (int)(len / 4.0f);
+    int n = (int)(len / 6.0f);
     if (n < 1) n = 1;
     box(mx, 0.35f, mz, 0.12f, 0.12f, len, ang, 0xff3a6a9a);
     box(mx, 0.75f, mz, 0.12f, 0.12f, len, ang, 0xff3a6a9a);
@@ -997,11 +1031,11 @@ static void draw_scene(void) {
 
     sceGuEnable(GU_LIGHTING);
     sceGuEnable(GU_LIGHT0);
-    ScePspFVector3 dir = { -0.4f, -1.0f, -0.3f };
+    ScePspFVector3 dir = { 0.4f, 1.0f, 0.3f };
     sceGuLight(0, GU_DIRECTIONAL, GU_DIFFUSE, &dir);
-    unsigned int lc = 0xff000000 | ((unsigned int)(255*b) << 16) | ((unsigned int)(255*b) << 8) | (unsigned int)(255*b);
+    unsigned int lc = 0xff000000 | ((unsigned int)(165*b) << 16) | ((unsigned int)(165*b) << 8) | (unsigned int)(165*b);
     sceGuLightColor(0, GU_DIFFUSE, lc);
-    sceGuAmbient(0xff000000 | ((unsigned int)(90*b) << 16) | ((unsigned int)(90*b) << 8) | (unsigned int)(90*b));
+    sceGuAmbient(0xff000000 | ((unsigned int)(105*b) << 16) | ((unsigned int)(105*b) << 8) | (unsigned int)(105*b));
     sceGuColorMaterial(GU_AMBIENT | GU_DIFFUSE);
 
     draw_ground();
@@ -1026,9 +1060,16 @@ static void draw_scene(void) {
     }
 
     /* celeiro, casa do jogador */
-    if (NEAR(-14, -10, 70)) {
-        box(-14, 0, -10, 8, 4.5f, 6, 0, 0xff2828b0);
-        box(-14, 4.5f, -10, 8.4f, 1.5f, 6.4f, 0, 0xff303030);
+    if (NEAR(BARN_X, BARN_Z, 70)) {
+        box(BARN_X, 0, BARN_Z, 8, 4.5f, 6, 0, 0xff2828b0);
+        box(BARN_X, 4.5f, BARN_Z, 8.4f, 1.5f, 6.4f, 0, 0xff303030);
+        box(BARN_X, 0, BARN_Z + 3.05f, 3.2f, 3.4f, 0.15f, 0, 0xffe0e8f0);
+        box(BARN_X, 0, BARN_Z + 3.12f, 0.2f, 3.4f, 0.1f, 0, 0xff2828b0);
+        box(BARN_X, 4.8f, BARN_Z + 3.15f, 3.6f, 0.9f, 0.1f, 0, 0xff30e0ff);
+        box(BARN_X + 5.2f, 0, BARN_Z + 2.0f, 1.4f, 1.0f, 1.4f, 0, 0xff30c0e0);
+        box(BARN_X - 5.2f, 0, BARN_Z + 2.4f, 1.4f, 1.0f, 1.4f, 0, 0xff30c0e0);
+        box(BARN_X + 6.5f, 0, BARN_Z - 1.5f, 2.2f, 7.0f, 2.2f, 0, 0xffc8c8c8);
+        box(BARN_X + 6.5f, 7.0f, BARN_Z - 1.5f, 2.5f, 0.8f, 2.5f, 0, 0xff303030);
     }
     if (NEAR(HOUSE_X, HOUSE_Z, 70)) draw_player_house();
 
@@ -1098,7 +1139,7 @@ static void draw_scene(void) {
     /* arvores */
     for (int i = 0; i < NTREES; i++) {
         float tdx = treeX[i] - px, tdz = treeZ[i] - pz;
-        if (tdx * tdx + tdz * tdz > 70.0f * 70.0f) continue;
+        if (tdx * tdx + tdz * tdz > 58.0f * 58.0f) continue;
         box(treeX[i], 0, treeZ[i], 0.8f, treeH[i], 0.8f, 0, 0xff204060);
         box(treeX[i], treeH[i] - 0.5f, treeZ[i], 3.2f, 2.8f, 3.2f, 0.4f * i, foliage(i));
     }
@@ -1274,7 +1315,6 @@ static void ui_text(int x, int y, int sc, unsigned int color, const char *s) {
 }
 
 static void ui_shadow(int x, int y, int sc, unsigned int color, const char *s) {
-    ui_text(x + sc, y + sc, sc, 0xff000000, s);
     ui_text(x, y, sc, color, s);
 }
 
@@ -1307,8 +1347,8 @@ static void draw_ui(void) {
                 "Analog:andar  L/R:camera  < >:semente",
                 "X:plantar/colher/pescar  Quad:comprar semente",
                 "Circ:vender tudo (mercado)",
-                "Tri:falar/entrar/coletar (casa, vila, loja,",
-                "   galinheiro, curral)   START:menu",
+                "Tri:falar/entrar/coletar (casa, celeiro, vila,",
+                "   loja, galinheiro, curral)   START:menu",
                 "SELECT:ajuda"
             };
             rect2d(0, 78, 276, 136, 0x90000000);
@@ -1327,6 +1367,8 @@ static void draw_ui(void) {
             sprintf(sub, "Tri: entregar   (voce tem %d)", inv[mis[v].item]);
         } else if (near_hall()) {
             pr = "PREFEITURA  Tri: abrir quadro";
+        } else if (near_barn()) {
+            pr = "CELEIRO  Tri: fabricar produtos";
         } else if (near_house()) {
             sprintf(pb, "CASA nivel %d  Tri: abrir", houseLvl); pr = pb;
         } else if (at_market()) {
@@ -1415,6 +1457,25 @@ static void draw_ui(void) {
         ui_shadow(56, 170, 1, 0xffc0c0c0, "Dormir passa a noite, salva o jogo e a fazenda produz.");
         ui_shadow(56, 180, 1, 0xffc0c0c0, "Casa melhor = mais producao durante o sono. Nivel 3 = premio!");
         if (menuMsg[0]) ui_shadow(56, 196, 2, 0xff60ff60, menuMsg);
+    } else if (mode == 5) {
+        rect2d(0, 0, 480, 272, 0x80000000);
+        window(36, 36, 444, 246);
+        ui_shadow(170, 46, 2, 0xff40e0ff, "== CELEIRO ==");
+        for (int i = 0; i < 5; i++) {
+            int y = 70 + i * 22;
+            if (i == menuSel) rect2d(46, y - 3, 434, y + 17, 0xc0a06020);
+            if (i < 4) {
+                sprintf(buf, "%d %s > %s", recQty[i], itemName[recIn[i]], itemName[recOut[i]]);
+                ui_shadow(56, y, 2, 0xffffffff, buf);
+                sprintf(buf, "Tem:%d", inv[recIn[i]]);
+                ui_shadow(340, y, 2, inv[recIn[i]] >= recQty[i] ? 0xff60ff60 : 0xff8080ff, buf);
+            } else ui_shadow(56, y, 2, 0xffffffff, "Sair");
+        }
+        sprintf(buf, "Pao:%d Queijo:%d Suco:%d Molho:%d", inv[IT_PAO], inv[IT_QUEIJO], inv[IT_SUCO], inv[IT_MOLHO]);
+        ui_shadow(56, 184, 1, 0xffffffff, buf);
+        ui_shadow(56, 198, 1, 0xffc0c0c0, "Produtos valem mais! Venda no mercado ou use nas missoes.");
+        ui_shadow(56, 210, 1, 0xffc0c0c0, "Cima/Baixo + X fabricar   START/O sair");
+        if (menuMsg[0]) ui_shadow(56, 224, 2, 0xff60ff60, menuMsg);
     } else {
         rect2d(0, 0, 480, 272, 0x80000000);
         window(24, 30, 456, 242);
@@ -1495,6 +1556,7 @@ int main(void) {
         else if (mode == 2) shop_update(pressed);
         else if (mode == 3) house_update(pressed);
         else if (mode == 4) hall_update(pressed);
+        else if (mode == 5) barn_update(pressed);
         else update(dt, &pad, pressed);
 
         sceGuStart(GU_DIRECT, list);
