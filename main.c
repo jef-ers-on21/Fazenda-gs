@@ -133,49 +133,93 @@ static void box(float x, float y, float z, float sx, float sy, float sz,
 }
 
 /* ---------- audio (musica + efeitos) ---------- */
-#define STEP 15000
 static volatile int musicOn = 1;
 static volatile int sfxQ = 0;
+static volatile int songId = 0;   /* 0 primavera, 1 verao, 2 outono, 3 inverno, 4 festival */
 
-static const unsigned char MEL[][2] = {
+static const unsigned char MEL0[][2] = {
     {64,1},{67,1},{72,1},{67,1}, {62,1},{67,1},{71,1},{67,1},
     {64,1},{69,1},{72,1},{69,1}, {65,1},{69,1},{72,1},{69,1},
     {64,1},{67,1},{72,1},{67,1}, {62,1},{67,1},{71,1},{67,1},
     {65,1},{64,1},{62,1},{60,1}, {60,4}
 };
-#define NMEL ((int)(sizeof(MEL) / sizeof(MEL[0])))
-static const unsigned char BASS[8] = { 48, 43, 45, 41, 48, 43, 41, 48 };
-static const float SFXF[6][3] = { {0,0,0}, {660,880,0}, {523,659,784}, {988,1319,0}, {440,0,0}, {160,0,0} };
-static const int   SFXMS[6][3] = { {0,0,0}, {50,70,0}, {60,60,90}, {70,170,0}, {40,0,0}, {180,0,0} };
+static const unsigned char MEL1[][2] = {
+    {67,1},{71,1},{74,1},{71,1}, {69,1},{72,1},{76,1},{72,1},
+    {67,1},{72,1},{76,1},{72,1}, {66,1},{69,1},{74,1},{69,1},
+    {67,1},{71,1},{74,1},{79,1}, {76,1},{72,1},{69,1},{72,1},
+    {72,1},{74,1},{72,1},{71,1}, {67,4}
+};
+static const unsigned char MEL2[][2] = {
+    {69,1},{72,1},{76,1},{72,1}, {65,1},{69,1},{72,1},{69,1},
+    {67,1},{72,1},{76,1},{72,1}, {62,1},{67,1},{71,1},{67,1},
+    {69,1},{72,1},{76,1},{74,1}, {72,1},{69,1},{65,1},{69,1},
+    {68,1},{71,1},{76,1},{71,1}, {69,4}
+};
+static const unsigned char MEL3[][2] = {
+    {72,2},{76,2}, {74,2},{71,2}, {69,2},{72,2}, {67,2},{71,2},
+    {72,2},{79,2}, {77,2},{76,2}, {74,2},{72,2}, {72,4}
+};
+static const unsigned char MEL4[][2] = {
+    {72,1},{76,1},{79,1},{76,1}, {77,1},{74,1},{71,1},{74,1},
+    {76,1},{79,1},{84,1},{79,1}, {77,1},{76,1},{74,1},{72,1},
+    {72,1},{76,1},{79,1},{76,1}, {77,1},{74,1},{71,1},{74,1},
+    {76,1},{74,1},{72,1},{71,1}, {72,4}
+};
+static const unsigned char BASS_[5][8] = {
+    { 48, 43, 45, 41, 48, 43, 41, 48 },
+    { 43, 45, 48, 50, 43, 45, 48, 43 },
+    { 45, 41, 48, 43, 45, 41, 40, 45 },
+    { 48, 43, 45, 43, 48, 41, 43, 48 },
+    { 48, 43, 48, 41, 48, 43, 43, 48 }
+};
+typedef struct { const unsigned char (*mel)[2]; int n; int step; int bassMode; float vol; } Song;
+#define NM(a) ((int)(sizeof(a) / sizeof((a)[0])))
+static const Song SONGS[5] = {
+    { MEL0, NM(MEL0), 15000, 0, 0.22f },
+    { MEL1, NM(MEL1), 13000, 0, 0.22f },
+    { MEL2, NM(MEL2), 17000, 0, 0.22f },
+    { MEL3, NM(MEL3), 20000, 0, 0.20f },
+    { MEL4, NM(MEL4),  9500, 1, 0.24f }
+};
+static const float SFXF[7][3] = { {0,0,0}, {660,880,0}, {523,659,784}, {988,1319,0}, {440,0,0}, {160,0,0}, {900,700,0} };
+static const int   SFXMS[7][3] = { {0,0,0}, {50,70,0}, {60,60,90}, {70,170,0}, {40,0,0}, {180,0,0}, {50,70,0} };
 
-/* 1=plantar/comprar 2=colher 3=moeda 4=clique 5=erro */
+/* 1=plantar/comprar 2=colher 3=moeda 4=clique 5=erro 6=cachorro */
 static void play_sfx(int t) { sfxQ = t; }
 
 static float midi_freq(int m) { return 440.0f * powf(2.0f, (m - 69) / 12.0f); }
 
 static int audio_thread(SceSize args, void *argp) {
     static short buf[1024 * 2] __attribute__((aligned(64)));
-    float mfreq[40], bfreq[8];
+    static float mfreq[5][40], bfreq[5][8];
     int ch = sceAudioChReserve(PSP_AUDIO_NEXT_CHANNEL, 1024, PSP_AUDIO_FORMAT_STEREO);
     if (ch < 0) return 0;
-    for (int i = 0; i < NMEL; i++) mfreq[i] = midi_freq(MEL[i][0]);
-    for (int i = 0; i < 8; i++) bfreq[i] = midi_freq(BASS[i]);
-    int mi = 0, mpos = 0, songStep = 0, sType = 0, sPos = 0;
+    for (int sg = 0; sg < 5; sg++) {
+        for (int i = 0; i < SONGS[sg].n && i < 40; i++) mfreq[sg][i] = midi_freq(SONGS[sg].mel[i][0]);
+        for (int i = 0; i < 8; i++) bfreq[sg][i] = midi_freq(BASS_[sg][i]);
+    }
+    int cs = 0, mi = 0, mpos = 0, songStep = 0, sType = 0, sPos = 0;
     float mph = 0, bph = 0, sph = 0;
     while (running) {
+        int sid = songId;
+        if (sid < 0 || sid > 4) sid = 0;
+        if (sid != cs) { cs = sid; mi = 0; mpos = 0; songStep = 0; }
+        const Song *sg = &SONGS[cs];
         for (int i = 0; i < 1024; i++) {
             float out = 0;
             if (musicOn) {
-                int nlen = MEL[mi][1] * STEP;
+                int nlen = sg->mel[mi][1] * sg->step;
                 float env = 1.0f - 0.6f * ((float)mpos / (float)nlen);
                 float att = (mpos < 400) ? (mpos / 400.0f) : 1.0f;
-                mph += mfreq[mi] / 44100.0f; if (mph >= 1.0f) mph -= 1.0f;
-                bph += bfreq[(songStep / 4) % 8] / 44100.0f; if (bph >= 1.0f) bph -= 1.0f;
-                out += (4.0f * fabsf(mph - 0.5f) - 1.0f) * env * att * 0.22f;
+                float bf = bfreq[cs][(songStep / 4) % 8];
+                if (sg->bassMode && (songStep & 1)) bf *= 1.5f;
+                mph += mfreq[cs][mi] / 44100.0f; if (mph >= 1.0f) mph -= 1.0f;
+                bph += bf / 44100.0f; if (bph >= 1.0f) bph -= 1.0f;
+                out += (4.0f * fabsf(mph - 0.5f) - 1.0f) * env * att * sg->vol;
                 out += (4.0f * fabsf(bph - 0.5f) - 1.0f) * 0.14f;
                 if (++mpos >= nlen) {
-                    mpos = 0; songStep += MEL[mi][1];
-                    if (++mi >= NMEL) { mi = 0; songStep = 0; }
+                    mpos = 0; songStep += sg->mel[mi][1];
+                    if (++mi >= sg->n) { mi = 0; songStep = 0; }
                 }
             }
             if (sfxQ) { sType = sfxQ; sfxQ = 0; sPos = 0; }
@@ -230,6 +274,9 @@ static int audio_thread(SceSize args, void *argp) {
 #define HALL_X  0.0f
 #define HALL_Z  (-58.0f)
 #define SEASON_LEN 300.0f
+#define NNPC   6
+#define FEST_X 8.0f
+#define FEST_Z (-27.0f)
 
 enum { IT_TOMATE = 0, IT_TRIGO = 1, IT_OVO = 4, IT_LEITE = 5, IT_CARNE = 6, IT_PEIXE = 7, IT_FRUTA = 8,
        IT_PAO = 9, IT_QUEIJO = 10, IT_SUCO = 11, IT_MOLHO = 12 };
@@ -251,14 +298,14 @@ static const int   recOut[4]        = { IT_PAO, IT_QUEIJO, IT_SUCO, IT_MOLHO };
 static const int   houseCost[3]     = { 0, 300, 800 };
 static const char *houseName[3]     = { "Cabana", "Casa", "Mansao" };
 static const char *seasonName[4]    = { "Primavera", "Verao", "Outono", "Inverno" };
-static const char *npcName[3]       = { "Maria", "Joao", "Ana" };
-static const float npcX[3]          = { -5.0f, 5.0f, -5.0f };
-static const float npcZ[3]          = { -34.0f, -42.0f, -50.0f };
+static const char *npcName[NNPC]    = { "Maria", "Joao", "Ana", "Pedro", "Lucia", "Bento" };
+static const float npcX[NNPC]       = { -5.0f, 5.0f, -5.0f, 5.0f, -5.0f, 5.0f };
+static const float npcZ[NNPC]       = { -34.0f, -42.0f, -50.0f, -34.0f, -42.0f, -50.0f };
 
 static Plot plots[NPLOTS];
 static Animal chick[NCHICK], cow[NCOW], pig[NPIG];
 static FruitTree ftree[NFRUIT];
-static Mission mis[3];
+static Mission mis[NNPC];
 static float treeX[NTREES], treeZ[NTREES], treeH[NTREES];
 static float px = 0, pz = 0, cam = 0;
 static int money = 50, selCrop = 0, showHelp = 1;
@@ -279,6 +326,27 @@ static float sleepFade = 0;
 static int facingRight = 1, moving = 0;
 static float walkPhase = 0;
 static unsigned int seed_rng = 12345;
+static float dogX = 2.0f, dogZ = 2.0f, dogWalk = 0, dogTimer = 60.0f;
+static int dogFacingRight = 1, dogMoving = 0, lastDay = -1;
+
+#define APP_SPLASH  0
+#define APP_TITLE   1
+#define APP_NEW     2
+#define APP_LOAD    3
+#define APP_CREDITS 4
+#define APP_POST    5
+#define APP_PLAY    6
+static int appState = APP_SPLASH;
+static float appT = 0, creditsY = 272.0f;
+static int curSlot = 0, worldSeed = 0, worldName = 0, startSeason = 0, difficulty = 1, endingSeen = 0;
+static int titleSel = 0, nwSel = 0, nwSlot = 0, nwName = 0, nwSeed = 0, nwSeason = 0, nwDiff = 1;
+static int slotSel = 0, delConfirm = -1, creditsFromGame = 0;
+static const char *worldNames[8] = { "Fazenda Feliz", "Sitio do Sol", "Recanto Verde", "Vale Dourado",
+                                     "Campo Alegre", "Rancho da Paz", "Horta Bonita", "Chacara Azul" };
+static const char *diffNames[3] = { "Facil ($300)", "Normal ($100)", "Dificil ($20)" };
+static const int diffMoney[3] = { 300, 100, 20 };
+typedef struct { int used, nameIdx, day, money; } SlotInfo;
+static SlotInfo slotInfos[3];
 
 static const float MKT_X = 0.0f, MKT_Z = -14.0f;
 
@@ -295,6 +363,7 @@ static float dist2d(float ax, float az, float bx, float bz) {
 #define NEAR(x, z, r) (dist2d(px, pz, (x), (z)) < (r))
 
 static int nplots(void) { return landUp ? NPLOTS : 12; }
+static int festival_active(void) { return (((int)(gameTime / 150.0f)) % 4) == 3; }
 static int season(void) { return ((int)(gameTime / SEASON_LEN)) % 4; }
 static float season_mult(void) { static const float m[4] = { 1.25f, 1.0f, 1.0f, 0.5f }; return m[season()]; }
 static float fruit_mult(void)  { static const float m[4] = { 0.8f, 1.0f, 1.5f, 0.0f }; return m[season()]; }
@@ -352,7 +421,7 @@ static void init_world(void) {
     init_animals(chick, NCHICK, PEN_X, PEN_Z, 6.0f);
     init_animals(cow, NCOW, COW_X, COW_Z, 6.0f);
     init_animals(pig, NPIG, COW_X, COW_Z, 6.0f);
-    for (int v = 0; v < 3; v++) new_mission(v);
+    for (int v = 0; v < NNPC; v++) new_mission(v);
 }
 
 /* ---------- salvar / carregar ---------- */
@@ -371,6 +440,49 @@ typedef struct {
     float ftT[NFRUIT]; int ftRipe[NFRUIT];
 } SaveData;
 typedef struct { unsigned int magic; int inv2[4]; } SaveExtra;
+#define SAVE_MAGIC2 0x32475A46u
+typedef struct { unsigned int magic; int mItem[3], mQty[3], mReward[3]; } SaveExtra2;
+typedef struct { unsigned int magic; int worldSeed, nameIdx, startSeason, difficulty, endingSeen; } SaveExtra3;
+#define SAVE_MAGIC3 0x33475A46u
+
+static void reset_game_state(void) {
+    money = 50; selCrop = 0; showHelp = 1;
+    seeds[0] = 5; seeds[1] = 5; seeds[2] = 0; seeds[3] = 0;
+    memset(inv, 0, sizeof(inv));
+    coopEggs = penMilk = penMeat = 0;
+    boots = fert = feed = landUp = 0; houseLvl = 1; missionsDone = 0;
+    raining = 0; weatherT = 30.0f; mode = 0; menuSel = 0; menuMsg[0] = 0;
+    gameTime = 0; msg[0] = 0; msgTimer = 0; fishState = 0; fishTimer = 0; sleepFade = 0;
+    px = pz = cam = 0; facingRight = 1; moving = 0; walkPhase = 0;
+    dogX = 2.0f; dogZ = 2.0f; dogTimer = 60.0f; lastDay = -1; endingSeen = 0;
+}
+
+static unsigned int seed_for(int ws) { return ws <= 0 ? 12345u : (unsigned int)ws * 2654435761u + 12345u; }
+static void slot_path(int slot, char *out) { sprintf(out, SAVE_DIR "/save%d.dat", slot + 1); }
+
+static int open_slot_read(int slot) {
+    char p[96]; slot_path(slot, p);
+    int fd = sceIoOpen(p, PSP_O_RDONLY, 0777);
+    if (fd < 0 && slot == 0) fd = sceIoOpen(SAVE_DIR "/save.dat", PSP_O_RDONLY, 0777);
+    return fd;
+}
+
+static void refresh_slots(void) {
+    for (int sl = 0; sl < 3; sl++) {
+        SlotInfo *si = &slotInfos[sl]; memset(si, 0, sizeof(*si));
+        SaveData d; SaveExtra e; SaveExtra2 f; SaveExtra3 g;
+        int fd = open_slot_read(sl);
+        if (fd < 0) continue;
+        int r = sceIoRead(fd, &d, sizeof(d));
+        sceIoRead(fd, &e, sizeof(e));
+        sceIoRead(fd, &f, sizeof(f));
+        int r4 = sceIoRead(fd, &g, sizeof(g));
+        sceIoClose(fd);
+        if (r != (int)sizeof(d) || d.magic != SAVE_MAGIC || d.version != 3) continue;
+        si->used = 1; si->money = d.money; si->day = (int)(d.gameTime / 150.0f) + 1;
+        si->nameIdx = (r4 == (int)sizeof(g) && g.magic == SAVE_MAGIC3 && g.nameIdx >= 0 && g.nameIdx < 8) ? g.nameIdx : 0;
+    }
+}
 
 static int save_game(void) {
     SaveData d; memset(&d, 0, sizeof(d));
@@ -387,24 +499,43 @@ static int save_game(void) {
     sceIoMkdir("ms0:/PSP", 0777);
     sceIoMkdir("ms0:/PSP/SAVEDATA", 0777);
     sceIoMkdir(SAVE_DIR, 0777);
-    int fd = sceIoOpen(SAVE_FILE, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+    char path[96]; slot_path(curSlot, path);
+    int fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
     if (fd < 0) return 0;
     int w = sceIoWrite(fd, &d, sizeof(d));
     SaveExtra e; e.magic = SAVE_MAGIC;
     for (int i = 0; i < 4; i++) e.inv2[i] = inv[NITEMS_OLD + i];
     int w2 = sceIoWrite(fd, &e, sizeof(e));
+    SaveExtra2 f; f.magic = SAVE_MAGIC2;
+    for (int i = 0; i < 3; i++) { f.mItem[i] = mis[3 + i].item; f.mQty[i] = mis[3 + i].qty; f.mReward[i] = mis[3 + i].reward; }
+    int w3 = sceIoWrite(fd, &f, sizeof(f));
+    SaveExtra3 g; g.magic = SAVE_MAGIC3; g.worldSeed = worldSeed; g.nameIdx = worldName;
+    g.startSeason = startSeason; g.difficulty = difficulty; g.endingSeen = endingSeen;
+    int w4 = sceIoWrite(fd, &g, sizeof(g));
     sceIoClose(fd);
-    return w == (int)sizeof(d) && w2 == (int)sizeof(e);
+    return w == (int)sizeof(d) && w2 == (int)sizeof(e) && w3 == (int)sizeof(f) && w4 == (int)sizeof(g);
 }
 
 static int load_game(void) {
     SaveData d;
-    int fd = sceIoOpen(SAVE_FILE, PSP_O_RDONLY, 0777);
+    int fd = open_slot_read(curSlot);
     if (fd < 0) return 0;
     int r = sceIoRead(fd, &d, sizeof(d));
     SaveExtra e; int r2 = sceIoRead(fd, &e, sizeof(e));
+    SaveExtra2 f; int r3 = sceIoRead(fd, &f, sizeof(f));
+    SaveExtra3 g; int r4 = sceIoRead(fd, &g, sizeof(g));
     sceIoClose(fd);
     if (r != (int)sizeof(d) || d.magic != SAVE_MAGIC || d.version != 3) return 0;
+    reset_game_state();
+    if (r4 == (int)sizeof(g) && g.magic == SAVE_MAGIC3) {
+        worldSeed = g.worldSeed;
+        worldName = (g.nameIdx >= 0 && g.nameIdx < 8) ? g.nameIdx : 0;
+        startSeason = (g.startSeason >= 0 && g.startSeason < 4) ? g.startSeason : 0;
+        difficulty = (g.difficulty >= 0 && g.difficulty < 3) ? g.difficulty : 1;
+        endingSeen = g.endingSeen ? 1 : 0;
+    } else { worldSeed = 0; worldName = 0; startSeason = 0; difficulty = 1; endingSeen = 0; }
+    seed_rng = seed_for(worldSeed);
+    init_world();
     money = d.money; selCrop = d.selCrop; coopEggs = d.coopEggs; penMilk = d.penMilk;
     penMeat = d.penMeat; raining = d.raining; boots = d.boots; fert = d.fert; feed = d.feed;
     landUp = d.landUp; musicOn = d.musicOn; houseLvl = d.houseLvl; missionsDone = d.missionsDone;
@@ -414,6 +545,11 @@ static int load_game(void) {
     for (int i = 0; i < NITEMS_OLD; i++) inv[i] = d.inv[i];
     if (r2 == (int)sizeof(e) && e.magic == SAVE_MAGIC)
         for (int i = 0; i < 4; i++) inv[NITEMS_OLD + i] = e.inv2[i];
+    if (r3 == (int)sizeof(f) && f.magic == SAVE_MAGIC2)
+        for (int i = 0; i < 3; i++) {
+            mis[3 + i].item = f.mItem[i]; mis[3 + i].qty = f.mQty[i]; mis[3 + i].reward = f.mReward[i];
+            if (mis[3 + i].item < 0 || mis[3 + i].item >= NITEMS || mis[3 + i].qty < 1) new_mission(3 + i);
+        }
     for (int i = 0; i < 3; i++) {
         mis[i].item = d.mItem[i]; mis[i].qty = d.mQty[i]; mis[i].reward = d.mReward[i];
         if (mis[i].item < 0 || mis[i].item >= NITEMS || mis[i].qty < 1) new_mission(i);
@@ -428,6 +564,26 @@ static int load_game(void) {
     return 1;
 }
 
+static void check_ending(void) {
+    if (!endingSeen && houseLvl >= 3 && missionsDone >= 10) {
+        endingSeen = 1; creditsFromGame = 1; appState = APP_CREDITS;
+        creditsY = 272.0f; appT = 0; mode = 0;
+        save_game();
+    }
+}
+
+static void create_world(void) {
+    reset_game_state();
+    worldSeed = nwSeed ? nwSeed : (int)(sceKernelGetSystemTimeLow() % 99u) + 1;
+    worldName = nwName; startSeason = nwSeason; difficulty = nwDiff;
+    seed_rng = seed_for(worldSeed);
+    init_world();
+    money = diffMoney[difficulty];
+    gameTime = startSeason * SEASON_LEN;
+    curSlot = nwSlot;
+    save_game();
+}
+
 /* ---------- logica ---------- */
 static int near_area(float cx, float cz) { return fabsf(px - cx) < 9.0f && fabsf(pz - cz) < 9.0f; }
 static int at_market(void) { return NEAR(MKT_X, MKT_Z, 6.0f); }
@@ -435,6 +591,7 @@ static int near_shop(void) { return NEAR(SHOP_X, SHOP_Z, 6.0f); }
 static int near_house(void) { return NEAR(HOUSE_X, HOUSE_Z + 3.0f, 6.0f); }
 static int near_hall(void) { return NEAR(HALL_X, HALL_Z + 3.0f, 8.0f); }
 static int near_barn(void) { return NEAR(BARN_X, BARN_Z + 3.5f, 6.5f); }
+static int near_fest(void) { return festival_active() && NEAR(FEST_X, FEST_Z + 2.0f, 5.5f); }
 
 static float lake_dist(float x, float z) {
     float dx = fabsf(x - LAKE_X) - LAKE_HX, dz = fabsf(z - LAKE_Z) - LAKE_HZ;
@@ -466,7 +623,7 @@ static int nearest_fruit(void) {
 }
 
 static int nearest_npc(void) {
-    for (int i = 0; i < 3; i++) if (NEAR(npcX[i], npcZ[i], 3.5f)) return i;
+    for (int i = 0; i < NNPC; i++) if (NEAR(npcX[i], npcZ[i], 3.5f)) return i;
     return -1;
 }
 
@@ -530,11 +687,13 @@ static void do_sleep(void) {
 static int deliver(int v) {
     if (inv[mis[v].item] < mis[v].qty) return 0;
     inv[mis[v].item] -= mis[v].qty;
-    money += mis[v].reward;
+    int rw = festival_active() ? mis[v].reward * 3 / 2 : mis[v].reward;
+    money += rw;
     missionsDone++;
-    char b[64]; sprintf(b, "Missao feita! +$%d", mis[v].reward);
+    char b[64]; sprintf(b, "Missao feita! +$%d", rw);
     say(b); play_sfx(3);
     new_mission(v);
+    check_ending();
     return 1;
 }
 
@@ -551,18 +710,18 @@ static void fishing_press(void) {
 
 /* ---------- menus ---------- */
 static void menu_update(unsigned int pressed) {
-    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 4) % 5; play_sfx(4); }
-    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 5; play_sfx(4); }
+    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 5) % 6; play_sfx(4); }
+    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 6; play_sfx(4); }
     if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE)) { mode = 0; return; }
     if (pressed & PSP_CTRL_CROSS) {
         if (menuSel == 0) mode = 0;
         else if (menuSel == 1) { musicOn = !musicOn; play_sfx(4); }
-        else if (menuSel == 2) {
-            strcpy(menuMsg, save_game() ? "Jogo salvo!" : "Erro ao salvar!");
-        } else if (menuSel == 3) {
-            if (save_game()) running = 0;
+        else if (menuSel == 2) strcpy(menuMsg, save_game() ? "Jogo salvo!" : "Erro ao salvar!");
+        else if (menuSel == 3) {
+            if (save_game()) { mode = 0; appState = APP_TITLE; titleSel = 0; }
             else strcpy(menuMsg, "Erro ao salvar!");
-        } else running = 0;
+        } else if (menuSel == 4) { mode = 0; appState = APP_TITLE; titleSel = 0; }
+        else running = 0;
     }
 }
 
@@ -600,6 +759,7 @@ static void house_update(unsigned int pressed) {
                 money -= houseCost[houseLvl]; houseLvl++; play_sfx(3);
                 if (houseLvl == 3) { money += 500; strcpy(menuMsg, "Casa dos sonhos! +$500"); }
                 else strcpy(menuMsg, "Casa melhorada!");
+                check_ending();
             }
         } else mode = 0;
     }
@@ -609,7 +769,7 @@ static void hall_update(unsigned int pressed) {
     if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) { mode = 0; return; }
     if (pressed & PSP_CTRL_CROSS) {
         int n = 0;
-        for (int v = 0; v < 3; v++) n += deliver(v);
+        for (int v = 0; v < NNPC; v++) n += deliver(v);
         if (n == 0) { strcpy(menuMsg, "Nada para entregar ainda."); play_sfx(5); }
         else strcpy(menuMsg, "Pedidos entregues!");
     }
@@ -630,6 +790,37 @@ static void barn_update(unsigned int pressed) {
             sprintf(menuMsg, "Faltam %d %s!", recQty[menuSel] - inv[recIn[menuSel]], itemName[recIn[menuSel]]);
             play_sfx(5);
         }
+    }
+}
+
+static void fest_update(unsigned int pressed) {
+    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 2) % 3; play_sfx(4); }
+    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 3; play_sfx(4); }
+    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) { mode = 0; return; }
+    if (pressed & PSP_CTRL_CROSS) {
+        if (menuSel == 0) {
+            int total = 0;
+            for (int t = 0; t < NITEMS; t++) total += inv[t] * itemSell[t];
+            total = total * 3 / 2;
+            if (total > 0) {
+                money += total;
+                for (int t = 0; t < NITEMS; t++) inv[t] = 0;
+                sprintf(menuMsg, "Vendeu! +$%d", total); play_sfx(3);
+            } else { strcpy(menuMsg, "Nada para vender."); play_sfx(5); }
+        } else if (menuSel == 1) {
+            if (money < 25) { strcpy(menuMsg, "Dinheiro insuficiente!"); play_sfx(5); }
+            else {
+                float r = frand(); int prize;
+                money -= 25;
+                if (r < 0.5f) prize = 0;
+                else if (r < 0.8f) prize = 20;
+                else if (r < 0.93f) prize = 50;
+                else if (r < 0.99f) prize = 100;
+                else prize = 300;
+                if (prize == 0) { strcpy(menuMsg, "Nao foi dessa vez!"); play_sfx(5); }
+                else { money += prize; sprintf(menuMsg, "Premio: $%d!", prize); play_sfx(3); }
+            }
+        } else mode = 0;
     }
 }
 
@@ -684,6 +875,44 @@ static void update(float dt, const SceCtrlData *pad, unsigned int pressed) {
     }
     if (fishState && !near_lake()) fishState = 0;
 
+    /* cachorro: segue o jogador e as vezes acha coisas */
+    {
+        float ddx = px - dogX, ddz = pz - dogZ;
+        float dd = sqrtf(ddx * ddx + ddz * ddz);
+        dogMoving = 0;
+        if (dd > 25.0f) { dogX = px + 2.0f; dogZ = pz + 2.0f; }
+        else if (dd > 3.0f) {
+            float sp = 14.0f * dt;
+            float nx = dogX + ddx / dd * sp, nz = dogZ + ddz / dd * sp;
+            if (!in_lake(nx, nz)) {
+                dogX = nx; dogZ = nz; dogMoving = 1;
+                float rgx = -cosf(cam), rgz = sinf(cam);
+                float sd = (ddx / dd) * rgx + (ddz / dd) * rgz;
+                if (sd > 0.15f) dogFacingRight = 1;
+                else if (sd < -0.15f) dogFacingRight = 0;
+            }
+        }
+        if (dogMoving) dogWalk += dt * 10.0f; else dogWalk = 0;
+        dogTimer -= dt;
+        if (dogTimer <= 0) {
+            if (dd < 8.0f) {
+                float r = frand(); char b[48];
+                dogTimer = 60.0f + frand() * 40.0f;
+                if (r < 0.6f) { int c = 10 + (int)(frand() * 20.0f); money += c; sprintf(b, "Rex achou $%d!", c); }
+                else if (r < 0.85f) { inv[IT_OVO]++; strcpy(b, "Rex achou um ovo!"); }
+                else { inv[IT_FRUTA]++; strcpy(b, "Rex achou uma fruta!"); }
+                say(b); play_sfx(6);
+            } else dogTimer = 5.0f;
+        }
+    }
+    {
+        int dayNow = (int)(gameTime / 150.0f);
+        if (dayNow != lastDay) {
+            lastDay = dayNow;
+            if (festival_active()) { say("Festival na vila hoje! Vendas +50%!"); play_sfx(3); }
+        }
+    }
+
     if (pressed & PSP_CTRL_LEFT)  { selCrop = (selCrop + NTYPES - 1) % NTYPES; play_sfx(4); }
     if (pressed & PSP_CTRL_RIGHT) { selCrop = (selCrop + 1) % NTYPES; play_sfx(4); }
     if (pressed & PSP_CTRL_SELECT) showHelp = !showHelp;
@@ -736,6 +965,7 @@ static void update(float dt, const SceCtrlData *pad, unsigned int pressed) {
                 say(b); play_sfx(5);
             }
         } else if (near_hall()) { mode = 4; menuMsg[0] = 0; play_sfx(4); return; }
+        else if (near_fest()) { mode = 6; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
         else if (near_barn()) { mode = 5; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
         else if (near_house()) { mode = 3; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
         else if (near_shop()) { mode = 2; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
@@ -747,7 +977,8 @@ static void update(float dt, const SceCtrlData *pad, unsigned int pressed) {
                 inv[IT_LEITE] += penMilk; inv[IT_CARNE] += penMeat; penMilk = penMeat = 0;
                 say("Coletou leite e carne!"); play_sfx(2);
             } else say("Nada para coletar ainda.");
-        } else say("Va a casa, loja, vila ou aos animais.");
+        } else if (NEAR(dogX, dogZ, 3.5f)) { say("Rex abanou o rabo!"); play_sfx(6); }
+        else say("Va a casa, loja, vila ou aos animais.");
     }
 }
 
@@ -789,7 +1020,8 @@ static const char *SPR_B[4] = {
 };
 
 static Mesh __attribute__((aligned(16))) meshPlayer[2][2];   /* [passo][0=direita,1=esquerda] */
-static Mesh __attribute__((aligned(16))) meshNpc[3];
+static Mesh __attribute__((aligned(16))) meshNpc[NNPC];
+static Mesh __attribute__((aligned(16))) meshDog[2][2];
 
 static unsigned int pal_color(char ch, const Pal *p) {
     switch (ch) {
@@ -836,15 +1068,70 @@ static void build_mesh(Mesh *m, const Pal *p, int frameB, int flip) {
     }
 }
 
+static const Pal PAL_PLAYER = { 0xff40d0f0, 0xff2020c0, 0xff2828d8, 0xffd04020, 0xff203050, 0xff90b8f0, 1 };
+
+static const char *DOG_A[8] = {
+    ".........pp.",
+    "oo......oooo",
+    ".o.ooooooeoo",
+    "..ooooooooon",
+    "..owwwwwoot.",
+    "..oo....oo..",
+    "..oo....oo..",
+    "..pp....pp.."
+};
+static const char *DOG_B[3] = {
+    "...oo..oo...",
+    "...oo..oo...",
+    "...pp..pp..."
+};
+
+static unsigned int dog_color(char ch) {
+    switch (ch) {
+    case 'o': return 0xff3a8ae0; case 'p': return 0xff1f4a90;
+    case 'w': return 0xffc8e0f8; case 'n': return 0xff202020;
+    case 'e': return 0xff101010; case 't': return 0xff8080f0;
+    default: return 0;
+    }
+}
+
+static char dog_px(int r, int c, int frameB) {
+    if (r < 0 || r >= 8 || c < 0 || c >= 12) return '.';
+    if (frameB && r >= 5) return DOG_B[r - 5][c];
+    return DOG_A[r][c];
+}
+
+static void build_dog(Mesh *m, int frameB, int flip) {
+    const float ps = 0.13f;
+    float sg = flip ? 1.0f : -1.0f;
+    m->n = 0;
+    for (int r = -1; r <= 8; r++) {
+        for (int c = -1; c <= 12; c++) {
+            unsigned int col = dog_color(dog_px(r, c, frameB));
+            if (!col) {
+                if (dog_color(dog_px(r - 1, c, frameB)) || dog_color(dog_px(r + 1, c, frameB)) ||
+                    dog_color(dog_px(r, c - 1, frameB)) || dog_color(dog_px(r, c + 1, frameB)))
+                    col = 0xff101830;
+                else continue;
+            }
+            add_quad(m, sg * (c - 6) * ps, (8 - r - 1) * ps, sg * (c + 1 - 6) * ps, (8 - r) * ps, col);
+        }
+    }
+}
+
 static void build_sprites(void) {
-    Pal pl = { 0xff40d0f0, 0xff2020c0, 0xff2828d8, 0xffd04020, 0xff203050, 0xff90b8f0, 1 };
-    Pal np[3] = {
+    Pal pl = PAL_PLAYER;
+    Pal np[NNPC] = {
         { 0xff3070e0, 0xff2050a0, 0xffc050e0, 0xff80402a, 0xff101830, 0xffa0c0f8, 0 },
         { 0xff404040, 0xff606060, 0xff30a030, 0xff506080, 0xff202020, 0xff80a8e0, 0 },
-        { 0xffe0e0e0, 0xffd09050, 0xfff0a030, 0xff404080, 0xff202020, 0xffa0c0f8, 0 }
+        { 0xffe0e0e0, 0xffd09050, 0xfff0a030, 0xff404080, 0xff202020, 0xffa0c0f8, 0 },
+        { 0xff2080c0, 0xff104060, 0xff30b0e0, 0xff503020, 0xff202020, 0xff70a0d8, 1 },
+        { 0xff204080, 0xff3060c0, 0xff50c0f0, 0xff804020, 0xff101830, 0xffa0c8f8, 0 },
+        { 0xffc8c8c8, 0xff808080, 0xff40a0a0, 0xff304050, 0xff202020, 0xff80a0d0, 1 }
     };
     for (int f = 0; f < 2; f++) for (int fl = 0; fl < 2; fl++) build_mesh(&meshPlayer[f][fl], &pl, f, fl);
-    for (int i = 0; i < 3; i++) build_mesh(&meshNpc[i], &np[i], 0, 0);
+    for (int i = 0; i < NNPC; i++) build_mesh(&meshNpc[i], &np[i], 0, 0);
+    for (int f = 0; f < 2; f++) for (int fl = 0; fl < 2; fl++) build_dog(&meshDog[f][fl], f, fl);
     sceKernelDcacheWritebackAll();
 }
 
@@ -1001,6 +1288,35 @@ static void draw_hall(void) {
     box(HALL_X, 4.0f, HALL_Z + 3.1f, 5.0f, 0.8f, 0.1f, 0, 0xff30e0ff);
 }
 
+static void draw_festival(void) {
+    static const unsigned int fc[5] = { 0xff2020d0, 0xff30e0ff, 0xff30c030, 0xffe08030, 0xffd040d0 };
+    for (int i = 0; i < 8; i++) {
+        float z = -30.0f - i * 3.5f;
+        box(-3.2f, 0, z, 0.15f, 3.4f, 0.15f, 0, 0xff3a6a9a);
+        box(3.2f, 0, z, 0.15f, 3.4f, 0.15f, 0, 0xff3a6a9a);
+        box(-3.2f, 3.0f, z, 0.1f, 0.6f, 0.9f, 0, fc[i % 5]);
+        box(3.2f, 3.0f, z, 0.1f, 0.6f, 0.9f, 0, fc[(i + 2) % 5]);
+    }
+    box(FEST_X, 0, FEST_Z, 4.0f, 1.0f, 1.6f, 0, 0xff3a6a9a);
+    for (int i = 0; i < 4; i++)
+        box(FEST_X - 1.5f + i * 1.0f, 2.8f, FEST_Z, 1.0f, 0.3f, 2.6f, 0, (i % 2) ? 0xfff0f0f0 : 0xff2020d0);
+    box(FEST_X - 1.9f, 0, FEST_Z + 1.2f, 0.2f, 2.8f, 0.2f, 0, 0xffe0e0e0);
+    box(FEST_X + 1.9f, 0, FEST_Z + 1.2f, 0.2f, 2.8f, 0.2f, 0, 0xffe0e0e0);
+    box(FEST_X, 3.3f, FEST_Z + 1.2f, 3.0f, 0.8f, 0.1f, 0, 0xff30e0ff);
+    float dayv = 0.5f + 0.5f * cosf(gameTime * 2.0f * PI_F / 150.0f);
+    if (dayv < 0.6f) {
+        for (int k = 0; k < 3; k++) {
+            float t = fmodf(gameTime * 0.5f + k * 0.7f, 2.0f) / 2.0f;
+            float cx = -8.0f + k * 8.0f, cy = 15.0f;
+            unsigned int c = fc[(k + (int)(gameTime * 0.5f)) % 5];
+            for (int i = 0; i < 12; i++) {
+                float a = i * (PI_F / 6.0f);
+                box(cx + cosf(a) * t * 6.0f, cy + sinf(a) * t * 6.0f - t * t * 4.0f, -46.0f, 0.3f, 0.3f, 0.3f, 0, c);
+            }
+        }
+    }
+}
+
 static void draw_scene(void) {
     static const unsigned int g1[4] = { 0xff50b050, 0xff3c9a3c, 0xff3a8ac0, 0xfff0f0f0 };
     static const unsigned int g2[4] = { 0xff48a848, 0xff328a34, 0xff3078b0, 0xffe0e4e8 };
@@ -1102,7 +1418,11 @@ static void draw_scene(void) {
         small_house(-12.0f, -34.0f, 0xffc8d8f0, 0xff2040a0);
         small_house(12.0f, -42.0f, 0xffb0e0c0, 0xff204080);
         small_house(-12.0f, -50.0f, 0xfff0d0b0, 0xff303090);
+        small_house(12.0f, -34.0f, 0xffd0c0f0, 0xff2060a0);
+        small_house(-12.0f, -42.0f, 0xffa0e0f0, 0xff802030);
+        small_house(12.0f, -50.0f, 0xffe0e0b0, 0xff305080);
         draw_hall();
+        if (festival_active()) draw_festival();
     }
 
     /* galinheiro */
@@ -1161,13 +1481,15 @@ static void draw_scene(void) {
 
     /* sombras */
     box(px, 0.1f, pz, 1.0f, 0.02f, 0.6f, 0, 0xff000000);
-    for (int i = 0; i < 3; i++)
+    box(dogX, 0.1f, dogZ, 0.9f, 0.02f, 0.5f, 0, 0xff000000);
+    for (int i = 0; i < NNPC; i++)
         if (NEAR(npcX[i], npcZ[i], 80)) box(npcX[i], 0.1f, npcZ[i], 1.0f, 0.02f, 0.6f, 0, 0xff000000);
 
     /* personagens 2D (sprites, sem luz) */
     sceGuDisable(GU_LIGHTING);
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < NNPC; i++)
         if (NEAR(npcX[i], npcZ[i], 80)) draw_sprite(&meshNpc[i], npcX[i], npcZ[i]);
+    draw_sprite(&meshDog[dogMoving ? (((int)dogWalk) & 1) : 0][dogFacingRight ? 0 : 1], dogX, dogZ);
     draw_sprite(&meshPlayer[moving ? (((int)walkPhase) & 1) : 0][facingRight ? 0 : 1], px, pz);
 }
 
@@ -1335,8 +1657,8 @@ static void draw_ui(void) {
     ui_shadow(4, 3, 2, 0xff40e0ff, buf);
     sprintf(buf, "< %s >  Sem:%d  Col:%d", cropName[selCrop], seeds[selCrop], inv[selCrop]);
     ui_shadow(4, 21, 2, 0xffffffff, buf);
-    sprintf(buf, "Dia %d %s %s", (int)(gameTime / 150.0f) + 1, seasonName[season()],
-            raining ? (season() == 3 ? "NEVE" : "CHUVA") : "");
+    sprintf(buf, "Dia %d %s %s%s", (int)(gameTime / 150.0f) + 1, seasonName[season()],
+            raining ? (season() == 3 ? "NEVE" : "CHUVA") : "", festival_active() ? " FESTA!" : "");
     ui_shadow(4, 39, 2, 0xffc0ffc0, buf);
     sprintf(buf, "Peixe:%d Fruta:%d Missoes:%d", inv[IT_PEIXE], inv[IT_FRUTA], missionsDone);
     ui_shadow(4, 57, 2, 0xffffffff, buf);
@@ -1367,6 +1689,8 @@ static void draw_ui(void) {
             sprintf(sub, "Tri: entregar   (voce tem %d)", inv[mis[v].item]);
         } else if (near_hall()) {
             pr = "PREFEITURA  Tri: abrir quadro";
+        } else if (near_fest()) {
+            pr = "FESTIVAL  Tri: abrir barraca";
         } else if (near_barn()) {
             pr = "CELEIRO  Tri: fabricar produtos";
         } else if (near_house()) {
@@ -1406,19 +1730,22 @@ static void draw_ui(void) {
             ui_shadow(x, 243, 2, 0xff40e0ff, pr);
         }
     } else if (mode == 1) {
-        static const char *opt[5] = { "Continuar", "", "Salvar", "Salvar e sair", "Sair sem salvar" };
+        static const char *opt[6] = { "Continuar", "", "", "Salvar e ir ao menu", "Menu sem salvar", "Sair do jogo" };
         rect2d(0, 0, 480, 272, 0x80000000);
-        window(96, 40, 384, 228);
-        ui_shadow(180, 50, 2, 0xff40e0ff, "== MENU ==");
-        for (int i = 0; i < 5; i++) {
-            int y = 76 + i * 20;
+        window(96, 30, 384, 242);
+        ui_shadow(180, 38, 2, 0xff40e0ff, "== MENU ==");
+        sprintf(buf, "%s - slot %d", worldNames[worldName], curSlot + 1);
+        ui_shadow(108, 56, 1, 0xffc0c0c0, buf);
+        for (int i = 0; i < 6; i++) {
+            int y = 68 + i * 20;
             if (i == menuSel) rect2d(106, y - 3, 374, y + 17, 0xc0a06020);
             if (i == 1) sprintf(buf, "%s Musica: %s", i == menuSel ? ">" : " ", musicOn ? "ligada" : "desligada");
+            else if (i == 2) sprintf(buf, "%s Salvar (slot %d)", i == menuSel ? ">" : " ", curSlot + 1);
             else sprintf(buf, "%s %s", i == menuSel ? ">" : " ", opt[i]);
             ui_shadow(110, y, 2, 0xffffffff, buf);
         }
-        ui_shadow(108, 184, 1, 0xffc0c0c0, "Cima/Baixo + X     START volta");
-        if (menuMsg[0]) ui_shadow(110, 196, 2, 0xff60ff60, menuMsg);
+        ui_shadow(108, 194, 1, 0xffc0c0c0, "Cima/Baixo + X     START volta");
+        if (menuMsg[0]) ui_shadow(110, 208, 2, 0xff60ff60, menuMsg);
     } else if (mode == 2) {
         static const char *nm[5] = { "Botas velozes", "Adubo (+50% cresc.)", "Racao (+50% animais)",
                                      "Ampliar terreno (+12)", "Sair" };
@@ -1457,6 +1784,21 @@ static void draw_ui(void) {
         ui_shadow(56, 170, 1, 0xffc0c0c0, "Dormir passa a noite, salva o jogo e a fazenda produz.");
         ui_shadow(56, 180, 1, 0xffc0c0c0, "Casa melhor = mais producao durante o sono. Nivel 3 = premio!");
         if (menuMsg[0]) ui_shadow(56, 196, 2, 0xff60ff60, menuMsg);
+    } else if (mode == 6) {
+        static const char *fo[3] = { "Vender tudo (+50%)", "Bilhete do sorteio ($25)", "Sair" };
+        rect2d(0, 0, 480, 272, 0x80000000);
+        window(36, 36, 444, 246);
+        ui_shadow(114, 46, 2, 0xff40e0ff, "== FESTIVAL DA VILA ==");
+        for (int i = 0; i < 3; i++) {
+            int y = 76 + i * 24;
+            if (i == menuSel) rect2d(46, y - 3, 434, y + 17, 0xc0a06020);
+            ui_shadow(56, y, 2, 0xffffffff, fo[i]);
+        }
+        sprintf(buf, "Seu dinheiro: $%d", money);
+        ui_shadow(56, 160, 2, 0xffffffff, buf);
+        ui_shadow(56, 184, 1, 0xffc0c0c0, "Hoje tudo vale 50% mais: vendas aqui e recompensas de missoes!");
+        ui_shadow(56, 196, 1, 0xffc0c0c0, "Sorteio: premios de $20 a $300.   Cima/Baixo + X   START/O sair");
+        if (menuMsg[0]) ui_shadow(56, 214, 2, 0xff60ff60, menuMsg);
     } else if (mode == 5) {
         rect2d(0, 0, 480, 272, 0x80000000);
         window(36, 36, 444, 246);
@@ -1480,17 +1822,17 @@ static void draw_ui(void) {
         rect2d(0, 0, 480, 272, 0x80000000);
         window(24, 30, 456, 242);
         ui_shadow(150, 38, 2, 0xff40e0ff, "== PREFEITURA ==");
-        for (int v = 0; v < 3; v++) {
+        for (int v = 0; v < NNPC; v++) {
             int have = inv[mis[v].item];
             sprintf(buf, "%s: %d %s %d/%d $%d", npcName[v], mis[v].qty, itemName[mis[v].item],
                     have > mis[v].qty ? mis[v].qty : have, mis[v].qty, mis[v].reward);
-            ui_shadow(40, 66 + v * 26, 2, have >= mis[v].qty ? 0xff60ff60 : 0xffffffff, buf);
+            ui_shadow(40, 58 + v * 19, 2, have >= mis[v].qty ? 0xff60ff60 : 0xffffffff, buf);
         }
         sprintf(buf, "Missoes concluidas: %d", missionsDone);
-        ui_shadow(40, 150, 2, 0xff40e0ff, buf);
-        ui_shadow(40, 176, 1, 0xffc0c0c0, "X: entregar tudo que der     START/O: sair");
-        ui_shadow(40, 188, 1, 0xffc0c0c0, "Fale com os moradores na vila para ver os pedidos.");
-        if (menuMsg[0]) ui_shadow(40, 204, 2, 0xff60ff60, menuMsg);
+        ui_shadow(40, 176, 2, 0xff40e0ff, buf);
+        ui_shadow(40, 198, 1, 0xffc0c0c0, "X: entregar tudo que der     START/O: sair");
+        { char hb[72]; sprintf(hb, "Meta final: Mansao + 10 missoes (feitas: %d/10)", missionsDone); ui_shadow(40, 208, 1, 0xffc0c0c0, hb); }
+        if (menuMsg[0]) ui_shadow(40, 220, 2, 0xff60ff60, menuMsg);
     }
 
     if (sleepFade > 0) {
@@ -1503,6 +1845,244 @@ static void draw_ui(void) {
     sceGuEnable(GU_DEPTH_TEST);
 }
 
+/* ---------- telas: abertura, titulo, novo mundo, carregar, creditos ---------- */
+static void ui_center(int y, int sc, unsigned int col, const char *str) {
+    ui_text((480 - (int)strlen(str) * 6 * sc) / 2, y, sc, col, str);
+}
+
+static void draw_art(const char *const *rows, int h, int w, int x, int y, int sc, const Pal *pal, int dog) {
+    for (int r = 0; r < h; r++) {
+        int c = 0;
+        while (c < w) {
+            unsigned int col = dog ? dog_color(rows[r][c]) : pal_color(rows[r][c], pal);
+            if (!col) { c++; continue; }
+            int c2 = c + 1;
+            while (c2 < w && (dog ? dog_color(rows[r][c2]) : pal_color(rows[r][c2], pal)) == col) c2++;
+            rect2d(x + c * sc, y + r * sc, x + c2 * sc, y + (r + 1) * sc, col);
+            c = c2;
+        }
+    }
+}
+
+typedef struct { const char *t; int sc; unsigned int col; } CLine;
+static const CLine CREDITS[] = {
+    { "FAZENDA SIMULATOR GS", 3, 0xff40e0ff },
+    { "", 1, 0 },
+    { "Um jogo desenvolvido por", 2, 0xffffffff },
+    { "MECANIC ENGINE GAMER", 3, 0xfff0e040 },
+    { "", 1, 0 },
+    { "Direcao de jogo", 1, 0xffc0c0c0 },
+    { "MECANIC ENGINE GAMER", 2, 0xffffffff },
+    { "", 1, 0 },
+    { "Arte e personagens", 1, 0xffc0c0c0 },
+    { "MECANIC ENGINE GAMER", 2, 0xffffffff },
+    { "", 1, 0 },
+    { "Musica e efeitos sonoros", 1, 0xffc0c0c0 },
+    { "MECANIC ENGINE GAMER", 2, 0xffffffff },
+    { "", 1, 0 },
+    { "Programacao", 1, 0xffc0c0c0 },
+    { "MECANIC ENGINE GAMER", 2, 0xffffffff },
+    { "", 1, 0 },
+    { "Moradores da vila", 1, 0xffc0c0c0 },
+    { "Maria  Joao  Ana  Pedro  Lucia  Bento", 1, 0xffffffff },
+    { "Companheiro: Rex", 1, 0xffffffff },
+    { "", 1, 0 },
+    { "Feito para PSP e PPSSPP", 2, 0xffffffff },
+    { "", 1, 0 },
+    { "", 1, 0 },
+    { "Obrigado por jogar!", 3, 0xff40e0ff }
+};
+#define NCRED ((int)(sizeof(CREDITS) / sizeof(CREDITS[0])))
+static int cred_h(const CLine *l) { return l->sc * 8 + (l->sc >= 2 ? 10 : 6); }
+static int credits_height(void) { int h = 0; for (int i = 0; i < NCRED; i++) h += cred_h(&CREDITS[i]); return h; }
+
+static void draw_app_ui(void) {
+    char buf[96];
+    sceGuDisable(GU_DEPTH_TEST);
+    sceGuEnable(GU_BLEND);
+    sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+
+    if (appState == APP_SPLASH) {
+        ui_center(108, 3, 0xfff0e040, "MECANIC ENGINE GAMER");
+        ui_center(148, 2, 0xffffffff, "apresenta");
+        float a = (appT < 0.8f) ? 1.0f - appT / 0.8f : (appT > 2.2f ? (appT - 2.2f) / 0.8f : 0.0f);
+        if (a > 1.0f) a = 1.0f;
+        if (a > 0) rect2d(0, 0, 480, 272, ((unsigned int)(a * 255.0f) << 24));
+    } else if (appState == APP_TITLE) {
+        static const char *to[4] = { "Novo mundo", "Carregar jogo", "Creditos", "Sair" };
+        rect2d(0, 0, 480, 272, 0x50000000);
+        window(66, 8, 414, 114);
+        ui_center(16, 5, 0xff40e0ff, "FAZENDA");
+        ui_center(60, 3, 0xffffffff, "SIMULATOR GS");
+        ui_center(90, 2, 0xfff0e040, "MECANIC ENGINE GAMER");
+        window(130, 122, 350, 232);
+        for (int i = 0; i < 4; i++) {
+            int y = 132 + i * 24;
+            if (i == titleSel) rect2d(138, y - 3, 342, y + 17, 0xc0a06020);
+            sprintf(buf, "%s %s", i == titleSel ? ">" : " ", to[i]);
+            ui_text(146, y, 2, 0xffffffff, buf);
+        }
+        draw_art(SPR_A, SPR_H, SPR_W, 30, 168, 4, &PAL_PLAYER, 0);
+        draw_art(DOG_A, 8, 12, 392, 208, 4, NULL, 1);
+        ui_center(250, 1, 0xffc0c0c0, "(c) MECANIC ENGINE GAMER - Fazenda Simulator GS");
+    } else if (appState == APP_NEW) {
+        rect2d(0, 0, 480, 272, 0x80000000);
+        window(36, 20, 444, 252);
+        ui_center(28, 2, 0xff40e0ff, "== NOVO MUNDO ==");
+        for (int i = 0; i < 7; i++) {
+            int y = 56 + i * 22;
+            if (i == nwSel) rect2d(46, y - 3, 434, y + 17, 0xc0a06020);
+            unsigned int col = (i == 5) ? 0xff60ff60 : 0xffffffff;
+            if (i == 0) sprintf(buf, "Slot: %d %s", nwSlot + 1, slotInfos[nwSlot].used ? "(sobrescrever!)" : "(vazio)");
+            else if (i == 1) sprintf(buf, "Fazenda: %s", worldNames[nwName]);
+            else if (i == 2) { if (nwSeed) sprintf(buf, "Semente: %d", nwSeed); else strcpy(buf, "Semente: aleatoria"); }
+            else if (i == 3) sprintf(buf, "Estacao: %s", seasonName[nwSeason]);
+            else if (i == 4) sprintf(buf, "Dificuldade: %s", diffNames[nwDiff]);
+            else if (i == 5) strcpy(buf, "CRIAR MUNDO");
+            else strcpy(buf, "Voltar");
+            ui_text(56, y, 2, col, buf);
+        }
+        ui_text(46, 214, 1, 0xffc0c0c0, "Cima/Baixo escolhe   Esq/Dir muda   X confirma   O volta");
+        ui_text(46, 226, 1, 0xffc0c0c0, "A semente muda a posicao das arvores do seu mundo.");
+        if (menuMsg[0]) ui_text(46, 238, 1, 0xff60ff60, menuMsg);
+    } else if (appState == APP_LOAD) {
+        rect2d(0, 0, 480, 272, 0x80000000);
+        window(36, 24, 444, 254);
+        ui_center(32, 2, 0xff40e0ff, "== CARREGAR JOGO ==");
+        for (int i = 0; i < 3; i++) {
+            int y = 62 + i * 50;
+            if (i == slotSel) rect2d(46, y - 4, 434, y + 36, 0xc0a06020);
+            if (slotInfos[i].used) {
+                sprintf(buf, "Slot %d: %s", i + 1, worldNames[slotInfos[i].nameIdx]);
+                ui_text(56, y, 2, 0xffffffff, buf);
+                sprintf(buf, "Dia %d   Dinheiro: $%d", slotInfos[i].day, slotInfos[i].money);
+                ui_text(56, y + 20, 1, 0xffc0ffc0, buf);
+            } else {
+                sprintf(buf, "Slot %d: (vazio)", i + 1);
+                ui_text(56, y, 2, 0xff909090, buf);
+            }
+        }
+        if (menuMsg[0]) ui_text(46, 214, 2, 0xff60ff60, menuMsg);
+        ui_text(46, 238, 1, 0xffc0c0c0, "X: carregar     Quadrado: apagar     O: voltar");
+    } else if (appState == APP_CREDITS) {
+        rect2d(0, 0, 480, 272, 0xd8000000);
+        float y = creditsY;
+        for (int i = 0; i < NCRED; i++) {
+            if (CREDITS[i].t[0] && y > -40 && y < 280) ui_center((int)y, CREDITS[i].sc, CREDITS[i].col, CREDITS[i].t);
+            y += cred_h(&CREDITS[i]);
+        }
+        rect2d(0, 254, 480, 272, 0xe0000000);
+        ui_center(260, 1, 0xff909090, "START: pular    X: acelerar");
+    } else if (appState == APP_POST) {
+        float t = appT;
+        if (t < 3.0f) ui_center(120, 2, 0xffffffff, "Algum tempo depois...");
+        else if (t < 7.0f) {
+            ui_center(40, 2, 0xffffffff, "Rex desenterrou algo no pomar...");
+            draw_art(DOG_A, 8, 12, 204, 110, 6, NULL, 1);
+        } else if (t < 11.0f) {
+            ui_center(30, 2, 0xff40e0ff, "Um velho mapa do tesouro!");
+            rect2d(160, 70, 340, 190, 0xff608090);
+            rect2d(164, 74, 336, 186, 0xff90c8e8);
+            for (int i = 0; i < 9; i++) rect2d(176 + i * 12, 150 - (i % 3) * 10, 182 + i * 12, 156 - (i % 3) * 10, 0xff305080);
+            for (int i = 0; i < 6; i++) {
+                rect2d(300 + i * 4, 110 + i * 4, 304 + i * 4, 114 + i * 4, 0xff2020d0);
+                rect2d(320 - i * 4, 110 + i * 4, 324 - i * 4, 114 + i * 4, 0xff2020d0);
+            }
+            draw_art(DOG_A, 8, 12, 60, 150, 4, NULL, 1);
+        } else if (t < 14.0f) {
+            ui_center(120, 2, 0xffffffff, "Mas essa e outra historia...");
+        } else {
+            ui_center(60, 3, 0xff40e0ff, "FAZENDA SIMULATOR GS 2");
+            ui_center(110, 4, 0xfff0e040, "EM BREVE");
+            ui_center(170, 2, 0xffffffff, "MECANIC ENGINE GAMER");
+            if (((int)(appT * 2.0f)) & 1) ui_center(230, 2, 0xffc0c0c0, creditsFromGame ? "X: voltar ao jogo" : "X: voltar ao menu");
+        }
+        ui_center(260, 1, 0xff707070, "START: pular");
+    }
+
+    sceGuDisable(GU_BLEND);
+    sceGuEnable(GU_DEPTH_TEST);
+}
+
+static void app_update(float dt, unsigned int pressed, unsigned int held) {
+    appT += dt;
+    if (appState != APP_SPLASH && appState != APP_POST) cam += dt * 0.12f;
+
+    if (appState == APP_SPLASH) {
+        if (appT > 3.0f || (pressed & (PSP_CTRL_START | PSP_CTRL_CROSS))) { appState = APP_TITLE; titleSel = 0; appT = 0; }
+    } else if (appState == APP_TITLE) {
+        if (pressed & PSP_CTRL_UP)   { titleSel = (titleSel + 3) % 4; play_sfx(4); }
+        if (pressed & PSP_CTRL_DOWN) { titleSel = (titleSel + 1) % 4; play_sfx(4); }
+        if (pressed & PSP_CTRL_CROSS) {
+            play_sfx(4);
+            if (titleSel == 0) {
+                refresh_slots();
+                nwSel = 0; nwName = 0; nwSeed = 0; nwSeason = 0; nwDiff = 1; nwSlot = 0;
+                for (int i = 2; i >= 0; i--) if (!slotInfos[i].used) nwSlot = i;
+                menuMsg[0] = 0; appState = APP_NEW;
+            } else if (titleSel == 1) {
+                refresh_slots(); slotSel = 0; delConfirm = -1; menuMsg[0] = 0; appState = APP_LOAD;
+            } else if (titleSel == 2) {
+                creditsFromGame = 0; creditsY = 272.0f; appT = 0; appState = APP_CREDITS;
+            } else running = 0;
+        }
+    } else if (appState == APP_NEW) {
+        if (pressed & PSP_CTRL_UP)   { nwSel = (nwSel + 6) % 7; play_sfx(4); }
+        if (pressed & PSP_CTRL_DOWN) { nwSel = (nwSel + 1) % 7; play_sfx(4); }
+        int d = 0;
+        if (pressed & PSP_CTRL_LEFT) d = -1;
+        if (pressed & PSP_CTRL_RIGHT) d = 1;
+        if (d) {
+            play_sfx(4);
+            if (nwSel == 0) nwSlot = (nwSlot + 3 + d) % 3;
+            else if (nwSel == 1) nwName = (nwName + 8 + d) % 8;
+            else if (nwSel == 2) { nwSeed += d; if (nwSeed < 0) nwSeed = 99; if (nwSeed > 99) nwSeed = 0; }
+            else if (nwSel == 3) nwSeason = (nwSeason + 4 + d) % 4;
+            else if (nwSel == 4) nwDiff = (nwDiff + 3 + d) % 3;
+        }
+        if ((pressed & PSP_CTRL_LTRIGGER) && nwSel == 2) nwSeed = (nwSeed + 90) % 100;
+        if ((pressed & PSP_CTRL_RTRIGGER) && nwSel == 2) nwSeed = (nwSeed + 10) % 100;
+        if (pressed & PSP_CTRL_CIRCLE) appState = APP_TITLE;
+        if (pressed & PSP_CTRL_CROSS) {
+            if (nwSel == 5) {
+                create_world();
+                appState = APP_PLAY; mode = 0;
+                say("Mundo criado! Boa sorte!"); play_sfx(3);
+            } else if (nwSel == 6) appState = APP_TITLE;
+        }
+    } else if (appState == APP_LOAD) {
+        if (pressed & PSP_CTRL_UP)   { slotSel = (slotSel + 2) % 3; delConfirm = -1; menuMsg[0] = 0; play_sfx(4); }
+        if (pressed & PSP_CTRL_DOWN) { slotSel = (slotSel + 1) % 3; delConfirm = -1; menuMsg[0] = 0; play_sfx(4); }
+        if (pressed & PSP_CTRL_CIRCLE) appState = APP_TITLE;
+        if (pressed & PSP_CTRL_SQUARE) {
+            if (!slotInfos[slotSel].used) { strcpy(menuMsg, "Slot vazio."); play_sfx(5); }
+            else if (delConfirm == slotSel) {
+                char pth[96]; slot_path(slotSel, pth); sceIoRemove(pth);
+                if (slotSel == 0) sceIoRemove(SAVE_DIR "/save.dat");
+                refresh_slots(); delConfirm = -1; strcpy(menuMsg, "Slot apagado."); play_sfx(2);
+            } else { delConfirm = slotSel; strcpy(menuMsg, "Quadrado de novo para apagar!"); play_sfx(5); }
+        }
+        if (pressed & PSP_CTRL_CROSS) {
+            if (!slotInfos[slotSel].used) { strcpy(menuMsg, "Slot vazio."); play_sfx(5); }
+            else {
+                curSlot = slotSel;
+                if (load_game()) { appState = APP_PLAY; mode = 0; say("Jogo carregado!"); play_sfx(3); }
+                else { strcpy(menuMsg, "Erro ao carregar!"); play_sfx(5); }
+            }
+        }
+    } else if (appState == APP_CREDITS) {
+        float sp = 28.0f + ((held & PSP_CTRL_CROSS) ? 70.0f : 0.0f);
+        creditsY -= sp * dt;
+        if (creditsY + credits_height() < 0 || (pressed & PSP_CTRL_START)) { appState = APP_POST; appT = 0; }
+        else if ((pressed & PSP_CTRL_CIRCLE) && !creditsFromGame) appState = APP_TITLE;
+    } else if (appState == APP_POST) {
+        if ((pressed & PSP_CTRL_START) || (appT > 14.0f && (pressed & PSP_CTRL_CROSS))) {
+            if (creditsFromGame) { appState = APP_PLAY; mode = 0; say("Voce zerou o jogo! Continue jogando."); }
+            else { appState = APP_TITLE; titleSel = 0; }
+        }
+    }
+}
+
 int main(void) {
     setup_callbacks();
 
@@ -1513,7 +2093,6 @@ int main(void) {
     build_ground();
     build_sprites();
     init_world();
-    if (load_game()) say("Jogo carregado!");
 
     int at = sceKernelCreateThread("audio", audio_thread, 0x12, 0x10000,
                                    PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU, NULL);
@@ -1547,21 +2126,28 @@ int main(void) {
         float dt = (now - last) / 1000000.0f; last = now;
         if (dt > 0.1f) dt = 0.1f;
         if (sleepFade > 0) sleepFade -= dt;
+        songId = (appState == APP_PLAY) ? (festival_active() ? 4 : season()) : ((appState == APP_CREDITS || appState == APP_POST) ? 3 : 0);
 
         sceCtrlPeekBufferPositive(&pad, 1);
         unsigned int pressed = pad.Buttons & ~oldButtons;
         oldButtons = pad.Buttons;
 
-        if (mode == 1) menu_update(pressed);
+        if (appState != APP_PLAY) app_update(dt, pressed, pad.Buttons);
+        else if (mode == 1) menu_update(pressed);
         else if (mode == 2) shop_update(pressed);
         else if (mode == 3) house_update(pressed);
         else if (mode == 4) hall_update(pressed);
         else if (mode == 5) barn_update(pressed);
+        else if (mode == 6) fest_update(pressed);
         else update(dt, &pad, pressed);
 
         sceGuStart(GU_DIRECT, list);
-        draw_scene();
-        draw_ui();
+        if (appState == APP_SPLASH || appState == APP_POST) {
+            sceGuClearColor(0xff000000);
+            sceGuClearDepth(0);
+            sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT | GU_FAST_CLEAR_BIT);
+        } else draw_scene();
+        if (appState == APP_PLAY) draw_ui(); else draw_app_ui();
         sceGuFinish();
         sceGuSync(0, 0);
 
