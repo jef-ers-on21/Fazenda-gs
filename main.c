@@ -1,12 +1,13 @@
 /*
- * Fazenda Simulator GS - PSP (PSPSDK) - 3D, mundo aberto
+ * SOBREVIVENDO EM GS - PSP (PSPSDK) - acao e sobrevivencia em mundo aberto 3D
+ * Desenvolvido por MECANIC ENGINE GAMER
+ *
  * Controles:
- *   Analogico  : andar          L / R : girar camera
- *   X          : plantar / colher / pescar
- *   Quadrado   : comprar semente (mercado)    Circulo : vender tudo (mercado)
- *   Esq/Dir    : trocar o tipo de semente
- *   Triangulo  : falar com moradores, entrar na casa/loja/prefeitura, coletar
- *   Start      : menu (salvar / sair)         Select : ajuda
+ *   Analogico  : andar            L / R : girar camera
+ *   X          : interagir (pegar arma, revistar, beber, acampamento, helicoptero)
+ *   Quadrado   : atacar (segure para armas automaticas)   Circulo : rolar (esquiva)
+ *   Triangulo  : trocar de arma   Esq/Dir : escolher item   Cima : usar item
+ *   Start      : menu (salvar/sair)       Select : ajuda
  */
 #include <pspkernel.h>
 #include <pspdebug.h>
@@ -20,7 +21,7 @@
 #include <string.h>
 #include <stdio.h>
 
-PSP_MODULE_INFO("FazendaSimulatorGS", 0, 1, 0);
+PSP_MODULE_INFO("SobrevivendoEmGS", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 
 #define BUF_W   512
@@ -29,12 +30,6 @@ PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 #define FRAME   0x88000
 #define PI_F    3.14159265f
 #define WORLD   95.0f
-#define NPLOTS  24
-#define NTREES  90
-#define NCHICK  8
-#define NDROPS  40
-#define PEN_X   (-4.0f)
-#define PEN_Z   (16.0f)
 
 typedef struct { float nx, ny, nz, x, y, z; } Vtx;
 #define VTX_TYPE (GU_NORMAL_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_3D)
@@ -132,59 +127,60 @@ static void box(float x, float y, float z, float sx, float sy, float sz,
     sceGumDrawArray(GU_TRIANGLES, VTX_TYPE, 36, 0, cube);
 }
 
+
 /* ---------- audio (musica + efeitos) ---------- */
 static volatile int musicOn = 1;
 static volatile int sfxQ = 0;
-static volatile int songId = 0;   /* 0 primavera, 1 verao, 2 outono, 3 inverno, 4 festival */
+static volatile int songId = 0;   /* 0 menu, 1 dia, 2 noite, 3 combate, 4 final */
 
 static const unsigned char MEL0[][2] = {
-    {64,1},{67,1},{72,1},{67,1}, {62,1},{67,1},{71,1},{67,1},
-    {64,1},{69,1},{72,1},{69,1}, {65,1},{69,1},{72,1},{69,1},
-    {64,1},{67,1},{72,1},{67,1}, {62,1},{67,1},{71,1},{67,1},
-    {65,1},{64,1},{62,1},{60,1}, {60,4}
+    {69,2},{72,2}, {76,2},{72,2}, {65,2},{69,2}, {72,2},{69,2},
+    {67,2},{71,2}, {74,2},{71,2}, {64,2},{68,2}, {69,4}
 };
 static const unsigned char MEL1[][2] = {
-    {67,1},{71,1},{74,1},{71,1}, {69,1},{72,1},{76,1},{72,1},
-    {67,1},{72,1},{76,1},{72,1}, {66,1},{69,1},{74,1},{69,1},
-    {67,1},{71,1},{74,1},{79,1}, {76,1},{72,1},{69,1},{72,1},
-    {72,1},{74,1},{72,1},{71,1}, {67,4}
+    {69,1},{76,1},{72,1},{76,1}, {65,1},{72,1},{69,1},{72,1},
+    {67,1},{74,1},{71,1},{74,1}, {64,1},{71,1},{68,1},{71,1},
+    {69,1},{76,1},{72,1},{76,1}, {65,1},{72,1},{69,1},{72,1},
+    {67,1},{71,1},{74,1},{71,1}, {69,4}
 };
 static const unsigned char MEL2[][2] = {
-    {69,1},{72,1},{76,1},{72,1}, {65,1},{69,1},{72,1},{69,1},
-    {67,1},{72,1},{76,1},{72,1}, {62,1},{67,1},{71,1},{67,1},
-    {69,1},{72,1},{76,1},{74,1}, {72,1},{69,1},{65,1},{69,1},
-    {68,1},{71,1},{76,1},{71,1}, {69,4}
+    {57,4},{60,4},{53,4},{55,4},{57,4},{64,4},{56,4},{57,4}
 };
 static const unsigned char MEL3[][2] = {
-    {72,2},{76,2}, {74,2},{71,2}, {69,2},{72,2}, {67,2},{71,2},
-    {72,2},{79,2}, {77,2},{76,2}, {74,2},{72,2}, {72,4}
+    {69,1},{69,1},{72,1},{69,1}, {70,1},{70,1},{74,1},{70,1},
+    {69,1},{69,1},{72,1},{76,1}, {75,1},{72,1},{70,1},{69,1},
+    {69,1},{69,1},{72,1},{69,1}, {70,1},{70,1},{74,1},{70,1},
+    {76,1},{75,1},{74,1},{72,1}, {69,4}
 };
 static const unsigned char MEL4[][2] = {
-    {72,1},{76,1},{79,1},{76,1}, {77,1},{74,1},{71,1},{74,1},
-    {76,1},{79,1},{84,1},{79,1}, {77,1},{76,1},{74,1},{72,1},
-    {72,1},{76,1},{79,1},{76,1}, {77,1},{74,1},{71,1},{74,1},
-    {76,1},{74,1},{72,1},{71,1}, {72,4}
+    {72,1},{76,1},{79,1},{76,1}, {71,1},{74,1},{79,1},{74,1},
+    {69,1},{72,1},{76,1},{72,1}, {69,1},{72,1},{77,1},{72,1},
+    {72,1},{76,1},{79,1},{84,1}, {83,1},{79,1},{74,1},{79,1},
+    {77,1},{76,1},{74,1},{71,1}, {72,4}
 };
 static const unsigned char BASS_[5][8] = {
-    { 48, 43, 45, 41, 48, 43, 41, 48 },
-    { 43, 45, 48, 50, 43, 45, 48, 43 },
-    { 45, 41, 48, 43, 45, 41, 40, 45 },
-    { 48, 43, 45, 43, 48, 41, 43, 48 },
-    { 48, 43, 48, 41, 48, 43, 43, 48 }
+    { 45, 45, 41, 41, 43, 43, 40, 45 },
+    { 45, 41, 43, 40, 45, 41, 43, 45 },
+    { 45, 48, 41, 43, 45, 40, 44, 45 },
+    { 45, 46, 45, 43, 45, 46, 40, 45 },
+    { 48, 43, 45, 41, 48, 43, 43, 48 }
 };
 typedef struct { const unsigned char (*mel)[2]; int n; int step; int bassMode; float vol; } Song;
 #define NM(a) ((int)(sizeof(a) / sizeof((a)[0])))
 static const Song SONGS[5] = {
-    { MEL0, NM(MEL0), 15000, 0, 0.22f },
-    { MEL1, NM(MEL1), 13000, 0, 0.22f },
-    { MEL2, NM(MEL2), 17000, 0, 0.22f },
-    { MEL3, NM(MEL3), 20000, 0, 0.20f },
-    { MEL4, NM(MEL4),  9500, 1, 0.24f }
+    { MEL0, NM(MEL0), 18000, 0, 0.20f },
+    { MEL1, NM(MEL1), 12500, 0, 0.21f },
+    { MEL2, NM(MEL2), 22000, 0, 0.18f },
+    { MEL3, NM(MEL3),  7500, 1, 0.24f },
+    { MEL4, NM(MEL4), 14000, 0, 0.22f }
 };
-static const float SFXF[7][3] = { {0,0,0}, {660,880,0}, {523,659,784}, {988,1319,0}, {440,0,0}, {160,0,0}, {900,700,0} };
-static const int   SFXMS[7][3] = { {0,0,0}, {50,70,0}, {60,60,90}, {70,170,0}, {40,0,0}, {180,0,0}, {50,70,0} };
+/* frequencia negativa = ruido */
+static const float SFXF[13][3]  = { {0,0,0}, {-1,150,0}, {400,250,0}, {-1,0,0}, {880,1175,0}, {440,0,0}, {120,90,0},
+                                    {80,70,0}, {300,450,0}, {523,659,784}, {160,0,0}, {1000,800,1000}, {-1,0,0} };
+static const int   SFXMS[13][3] = { {0,0,0}, {60,50,0}, {30,45,0}, {55,0,0}, {60,100,0}, {40,0,0}, {90,90,0},
+                                    {200,200,0}, {80,80,0}, {60,60,90}, {180,0,0}, {90,90,90}, {300,0,0} };
 
-/* 1=plantar/comprar 2=colher 3=moeda 4=clique 5=erro 6=cachorro */
+/* 1 tiro 2 golpe 3 acerto 4 coleta 5 clique 6 dano 7 gemido 8 rolar 9 abrir 10 erro 11 radio 12 helice */
 static void play_sfx(int t) { sfxQ = t; }
 
 static float midi_freq(int m) { return 440.0f * powf(2.0f, (m - 69) / 12.0f); }
@@ -200,6 +196,7 @@ static int audio_thread(SceSize args, void *argp) {
     }
     int cs = 0, mi = 0, mpos = 0, songStep = 0, sType = 0, sPos = 0;
     float mph = 0, bph = 0, sph = 0;
+    unsigned int rng = 12345u;
     while (running) {
         int sid = songId;
         if (sid < 0 || sid > 4) sid = 0;
@@ -233,9 +230,12 @@ static int audio_thread(SceSize args, void *argp) {
                 }
                 if (seg < 0) sType = 0;
                 else {
-                    sph += SFXF[sType][seg] / 44100.0f; if (sph >= 1.0f) sph -= 1.0f;
+                    float f = SFXF[sType][seg];
                     float dec = 1.0f - 0.5f * (float)(ms - acc) / (float)SFXMS[sType][seg];
-                    out += ((sph < 0.5f) ? 1.0f : -1.0f) * 0.14f * dec;
+                    float v;
+                    if (f < 0) { rng = rng * 1664525u + 1013904223u; v = ((rng >> 16) & 1) ? 1.0f : -1.0f; }
+                    else { sph += f / 44100.0f; if (sph >= 1.0f) sph -= 1.0f; v = (sph < 0.5f) ? 1.0f : -1.0f; }
+                    out += v * 0.15f * dec;
                     sPos++;
                 }
             }
@@ -250,84 +250,97 @@ static int audio_thread(SceSize args, void *argp) {
     return 0;
 }
 
-/* ---------- estado do jogo ---------- */
-#define NTYPES 4
-#define NCOW   3
-#define NPIG   3
-#define NFRUIT 6
-#define NITEMS 13
-#define NITEMS_OLD 9
-#define BARN_X (-14.0f)
-#define BARN_Z (-10.0f)
-#define COW_X  (-28.0f)
-#define COW_Z  (4.0f)
-#define SHOP_X (14.0f)
-#define SHOP_Z (-16.0f)
-#define HOUSE_X (-14.0f)
-#define HOUSE_Z (-24.0f)
-#define LAKE_X  (-34.0f)
-#define LAKE_Z  (-32.0f)
-#define LAKE_HX 10.0f
-#define LAKE_HZ 7.0f
-#define ORCH_X  38.0f
-#define ORCH_Z  (-2.0f)
-#define HALL_X  0.0f
-#define HALL_Z  (-58.0f)
-#define SEASON_LEN 300.0f
-#define NNPC   6
-#define FEST_X 8.0f
-#define FEST_Z (-27.0f)
+/* ---------- dados do mundo ---------- */
+#define NITEMS  10
+#define NITEMS_OLD 8
+#define NW      8
+#define NWP     10
+#define NLOOT   64
+#define NTREES  220
+#define NZ      40
+#define NZREG   32
+#define NB      13
+#define NROADS  8
+#define NCARS   10
+#define DAY_LEN 360.0f
+#define SAFE_R  13.0f
+#define BASE_X  0.0f
+#define BASE_Z  0.0f
+#define HELI_X  11.0f
+#define HELI_Z  7.0f
+#define LAKE_X  (-48.0f)
+#define LAKE_Z  32.0f
+#define LAKE_HX 14.0f
+#define LAKE_HZ 10.0f
 
-enum { IT_TOMATE = 0, IT_TRIGO = 1, IT_OVO = 4, IT_LEITE = 5, IT_CARNE = 6, IT_PEIXE = 7, IT_FRUTA = 8,
-       IT_PAO = 9, IT_QUEIJO = 10, IT_SUCO = 11, IT_MOLHO = 12 };
+enum { I_MAD, I_SUC, I_PANO, I_COM, I_AGUA, I_BAND, I_MUN, I_PECA, I_CART, I_RIFLE };
+static const char *itemName[NITEMS] = { "Madeira", "Sucata", "Pano", "Comida", "Agua", "Bandagem", "Municao", "Peca radio", "Cartuchos", "Balas rifle" };
+static const char *wName[NW] = { "Punhos", "Bastao", "Machado", "Facao", "Pistola", "SMG", "Escopeta", "Rifle" };
+static const float wDmg[NW]   = { 8.0f, 20.0f, 38.0f, 28.0f, 28.0f, 16.0f, 14.0f, 70.0f };
+static const float wRange[NW] = { 2.0f, 2.7f, 2.9f, 2.8f, 26.0f, 24.0f, 12.0f, 40.0f };
+static const float wCD[NW]    = { 0.35f, 0.45f, 0.70f, 0.38f, 0.40f, 0.13f, 0.85f, 1.00f };
+static const int   wAmmo[NW]  = { -1, -1, -1, -1, I_MUN, I_MUN, I_CART, I_RIFLE };
+static const int   wAuto[NW]  = { 0, 0, 0, 0, 0, 1, 0, 0 };
+static const int   wGive[NW]  = { 0, 0, 0, 0, 12, 30, 8, 6 };
+static const char *survNames[8] = { "Rafa", "Bia", "Leo", "Ana", "Dudu", "Nina", "Caio", "Lia" };
+static const char *diffNames[3] = { "Facil", "Normal", "Dificil" };
+static const float diffDmg[3]   = { 0.6f, 1.0f, 1.5f };
+static const float diffSpd[3]   = { 0.9f, 1.0f, 1.1f };
 
-typedef struct { float x, z; int stage; float t; int type; } Plot;
-typedef struct { float x, z, tx, tz, ang, t, prod; } Animal;
-typedef struct { float x, z, t; int ripe; } FruitTree;
-typedef struct { int item, qty, reward; } Mission;
+typedef struct { float x, z, hw, hd, h; unsigned int wall, roof; int door; } Bld;
+static const Bld BLD[NB] = {
+    { 22, -30, 4.0f, 3.0f, 4.0f, 0xff8a9aa8, 0xff303050, -1 },
+    { 34, -30, 3.5f, 3.5f, 5.0f, 0xff7080a0, 0xff202830, -1 },
+    { 46, -30, 4.0f, 3.0f, 4.0f, 0xff909098, 0xff303050, -1 },
+    { 58, -30, 3.5f, 3.0f, 4.5f, 0xff8a9aa8, 0xff202830, -1 },
+    { 22, -44, 3.5f, 3.5f, 5.0f, 0xff5a6a88, 0xff202830, 1 },
+    { 34, -44, 4.5f, 3.0f, 4.0f, 0xff8090a0, 0xff303050, 1 },
+    { 46, -44, 3.5f, 3.5f, 6.0f, 0xff707080, 0xff202830, 1 },
+    { 58, -44, 4.0f, 3.0f, 4.0f, 0xff7080a0, 0xff303050, 1 },
+    { -29, -55, 3.0f, 2.5f, 3.5f, 0xffc0c8d0, 0xff2020b0, 1 },
+    { 60, 20, 4.5f, 3.5f, 5.5f, 0xff2828b0, 0xff303030, 1 },
+    { -65, -15, 1.6f, 1.6f, 16.0f, 0xff707070, 0xff2020d0, 1 },
+    { 62, 50, 4.0f, 3.0f, 4.0f, 0xff506040, 0xff304028, 1 },
+    { 74, 56, 3.0f, 3.0f, 4.0f, 0xff506040, 0xff304028, 1 }
+};
+static const float ROADS[NROADS][4] = {
+    { 0, 0, 0, -37 }, { 0, -37, 70, -37 }, { 0, 0, 0, 70 }, { -70, 0, 0, 0 },
+    { 0, 0, 50, 0 }, { 50, 0, 50, 50 }, { 50, 50, 70, 50 }, { -35, 0, -35, -55 }
+};
+static const float CARS[NCARS][3] = {
+    { 26, -37, 1.57f }, { 42, -36.5f, 1.4f }, { 58, -37.5f, 1.7f }, { 0, -22, 0.1f }, { 1, 35, 0 },
+    { -1, 55, 0.2f }, { -25, 0.5f, 1.57f }, { -52, -0.5f, 1.5f }, { 22, 0, 1.57f }, { 50, 28, 0.1f }
+};
 
-static const char *cropName[NTYPES] = { "Tomate", "Trigo", "Milho", "Cenoura" };
-static const int   cropSeed[NTYPES] = { 5, 3, 8, 6 };
-static const float cropGrow[NTYPES] = { 12.0f, 8.0f, 16.0f, 14.0f };
-static const char *itemName[NITEMS] = { "Tomate", "Trigo", "Milho", "Cenoura", "Ovo", "Leite", "Carne", "Peixe", "Fruta", "Pao", "Queijo", "Suco", "Molho" };
-static const int   itemSell[NITEMS] = { 12, 7, 22, 15, 4, 9, 20, 14, 10, 30, 28, 40, 45 };
-static const int   shopPrice[4]     = { 80, 120, 90, 200 };
-static const int   recIn[4]         = { IT_TRIGO, IT_LEITE, IT_FRUTA, IT_TOMATE };
-static const int   recQty[4]        = { 3, 2, 3, 3 };
-static const int   recOut[4]        = { IT_PAO, IT_QUEIJO, IT_SUCO, IT_MOLHO };
-static const int   houseCost[3]     = { 0, 300, 800 };
-static const char *houseName[3]     = { "Cabana", "Casa", "Mansao" };
-static const char *seasonName[4]    = { "Primavera", "Verao", "Outono", "Inverno" };
-static const char *npcName[NNPC]    = { "Maria", "Joao", "Ana", "Pedro", "Lucia", "Bento" };
-static const float npcX[NNPC]       = { -5.0f, 5.0f, -5.0f, 5.0f, -5.0f, 5.0f };
-static const float npcZ[NNPC]       = { -34.0f, -42.0f, -50.0f, -34.0f, -42.0f, -50.0f };
+typedef struct { float x, z; int kind, looted; float t; } Loot;
+typedef struct { float x, z, hx, hz, hr, tx, tz, hp, ang, t, atk, hurt, dead, corpse; int type, state, active, horde; } Zomb;
+typedef struct { float x, z; int w, taken; } WPick;
+typedef struct { float x, z, r; int n, brutes; } Zone;
+static const Zone ZONES[5] = {
+    { 40, -37, 22, 10, 1 }, { 68, 53, 12, 5, 3 }, { -29, -55, 10, 3, 0 }, { 60, 20, 10, 3, 0 }, { -65, -15, 10, 3, 0 }
+};
+static const float zHP[3]    = { 60.0f, 40.0f, 170.0f };
+static const float zSpeed[3] = { 3.0f, 6.0f, 2.3f };
+static const float zDmg[3]   = { 9.0f, 7.0f, 22.0f };
 
-static Plot plots[NPLOTS];
-static Animal chick[NCHICK], cow[NCOW], pig[NPIG];
-static FruitTree ftree[NFRUIT];
-static Mission mis[NNPC];
+static Loot loot[NLOOT]; static int nloot = 0;
+static Zomb zomb[NZ];
 static float treeX[NTREES], treeZ[NTREES], treeH[NTREES];
-static float px = 0, pz = 0, cam = 0;
-static int money = 50, selCrop = 0, showHelp = 1;
-static int seeds[NTYPES] = { 5, 5, 0, 0 };
 static int inv[NITEMS];
-static int coopEggs, penMilk, penMeat;
-static int boots, fert, feed, landUp, houseLvl = 1, missionsDone;
-static int raining = 0;
-static float weatherT = 30.0f;
-static int mode = 0, menuSel = 0;   /* 0 jogo, 1 menu, 2 loja, 3 casa, 4 prefeitura */
-static char menuMsg[40] = "";
-static float gameTime = 0;
-static char msg[64] = "";
-static float msgTimer = 0;
-static int fishState = 0;           /* 0 parado, 1 esperando, 2 mordeu */
-static float fishTimer = 0;
-static float sleepFade = 0;
+static int hasW[NW] = { 1, 0, 0, 0, 0, 0, 0, 0 };
+static WPick wpick[NWP];
+static int curW = 0, selUse = 0, kills = 0, parts = 0, rescue = 0, deaths = 0, chasers = 0;
+static int mode = 0, menuSel = 0, showHelp = 1, endingSeen = 0;
+static float px = 3.0f, pz = 5.0f, cam = 0, pang = 0;
+static float hp = 100, hunger = 100, thirst = 100, stam = 100;
+static float gameTime = 0, rescueT = 0, hordeT = 0, attackCD = 0, swingT = 0, rollT = 0, rollX = 0, rollZ = 1;
+static float hurtT = 0, shotT = 0, shotX1 = 0, shotZ1 = 0, shotX2 = 0, shotZ2 = 0, moanCD = 0, drinkCD = 0;
+static float msgTimer = 0, deathT = 0;
 static int facingRight = 1, moving = 0;
 static float walkPhase = 0;
+static char msg[64] = "", menuMsg[48] = "";
 static unsigned int seed_rng = 12345;
-static float dogX = 2.0f, dogZ = 2.0f, dogWalk = 0, dogTimer = 60.0f;
-static int dogFacingRight = 1, dogMoving = 0, lastDay = -1;
+static int worldSeed = 0, difficulty = 1, nameIdx = 0, curSlot = 0;
 
 #define APP_SPLASH  0
 #define APP_TITLE   1
@@ -338,164 +351,177 @@ static int dogFacingRight = 1, dogMoving = 0, lastDay = -1;
 #define APP_PLAY    6
 static int appState = APP_SPLASH;
 static float appT = 0, creditsY = 272.0f;
-static int curSlot = 0, worldSeed = 0, worldName = 0, startSeason = 0, difficulty = 1, endingSeen = 0;
-static int titleSel = 0, nwSel = 0, nwSlot = 0, nwName = 0, nwSeed = 0, nwSeason = 0, nwDiff = 1;
+static int titleSel = 0, nwSel = 0, nwSlot = 0, nwName = 0, nwSeed = 0, nwDiff = 1;
 static int slotSel = 0, delConfirm = -1, creditsFromGame = 0;
-static const char *worldNames[8] = { "Fazenda Feliz", "Sitio do Sol", "Recanto Verde", "Vale Dourado",
-                                     "Campo Alegre", "Rancho da Paz", "Horta Bonita", "Chacara Azul" };
-static const char *diffNames[3] = { "Facil ($300)", "Normal ($100)", "Dificil ($20)" };
-static const int diffMoney[3] = { 300, 100, 20 };
-typedef struct { int used, nameIdx, day, money; } SlotInfo;
+typedef struct { int used, nameIdx, day, parts, kills; } SlotInfo;
 static SlotInfo slotInfos[3];
-
-static const float MKT_X = 0.0f, MKT_Z = -14.0f;
 
 static float frand(void) {
     seed_rng = seed_rng * 1664525u + 1013904223u;
     return (float)((seed_rng >> 8) & 0xFFFF) / 65535.0f;
 }
+static float dist2d(float ax, float az, float bx, float bz) { float dx = ax - bx, dz = az - bz; return sqrtf(dx * dx + dz * dz); }
+#define NEAR(x, z, r) (dist2d(px, pz, (x), (z)) < (r))
+static unsigned int seed_for(int ws) { return ws <= 0 ? 12345u : (unsigned int)ws * 2654435761u + 12345u; }
 
-static float dist2d(float ax, float az, float bx, float bz) {
-    float dx = ax - bx, dz = az - bz;
+static void say(const char *s) { strncpy(msg, s, sizeof(msg) - 1); msg[sizeof(msg) - 1] = 0; msgTimer = 3.0f; }
+
+/* ---------- tempo ---------- */
+static float hour_now(void) { return fmodf(gameTime / DAY_LEN * 24.0f + 8.0f, 24.0f); }
+static float daylight(void) { return 0.5f + 0.5f * cosf((hour_now() - 13.0f) * (2.0f * PI_F / 24.0f)); }
+static float nightness(void) { float n = (0.45f - daylight()) / 0.3f; return n < 0 ? 0 : (n > 1 ? 1 : n); }
+static int day_number(void) { return (int)((gameTime / DAY_LEN * 24.0f + 8.0f) / 24.0f) + 1; }
+
+/* ---------- geometria ---------- */
+static int near_road(float x, float z, float m) {
+    for (int i = 0; i < NROADS; i++) {
+        float x1 = ROADS[i][0], z1 = ROADS[i][1], x2 = ROADS[i][2], z2 = ROADS[i][3];
+        float minx = (x1 < x2 ? x1 : x2) - m - 2.5f, maxx = (x1 > x2 ? x1 : x2) + m + 2.5f;
+        float minz = (z1 < z2 ? z1 : z2) - m - 2.5f, maxz = (z1 > z2 ? z1 : z2) + m + 2.5f;
+        if (x >= minx && x <= maxx && z >= minz && z <= maxz) return 1;
+    }
+    return 0;
+}
+
+static void push_out_rect(float *x, float *z, float r, float cx, float cz, float hw, float hd) {
+    float dx = *x - cx, dz = *z - cz;
+    float ox = hw + r - fabsf(dx), oz = hd + r - fabsf(dz);
+    if (ox > 0 && oz > 0) {
+        if (ox < oz) *x += (dx < 0 ? -ox : ox); else *z += (dz < 0 ? -oz : oz);
+    }
+}
+static void collide(float *x, float *z, float r) {
+    for (int i = 0; i < NB; i++) push_out_rect(x, z, r, BLD[i].x, BLD[i].z, BLD[i].hw, BLD[i].hd);
+    push_out_rect(x, z, r, LAKE_X, LAKE_Z, LAKE_HX, LAKE_HZ);
+}
+static void collide_trees(float *x, float *z) {
+    for (int i = 0; i < NTREES; i++) {
+        float dx = *x - treeX[i], dz = *z - treeZ[i];
+        if (dx > 1.5f || dx < -1.5f || dz > 1.5f || dz < -1.5f) continue;
+        float d = sqrtf(dx * dx + dz * dz);
+        if (d < 0.9f && d > 0.001f) { *x = treeX[i] + dx / d * 0.9f; *z = treeZ[i] + dz / d * 0.9f; }
+    }
+}
+static float lake_dist(float x, float z) {
+    float dx = fabsf(x - LAKE_X) - LAKE_HX, dz = fabsf(z - LAKE_Z) - LAKE_HZ;
+    if (dx < 0) dx = 0;
+    if (dz < 0) dz = 0;
     return sqrtf(dx * dx + dz * dz);
 }
-
-#define NEAR(x, z, r) (dist2d(px, pz, (x), (z)) < (r))
-
-static int nplots(void) { return landUp ? NPLOTS : 12; }
-static int festival_active(void) { return (((int)(gameTime / 150.0f)) % 4) == 3; }
-static int season(void) { return ((int)(gameTime / SEASON_LEN)) % 4; }
-static float season_mult(void) { static const float m[4] = { 1.25f, 1.0f, 1.0f, 0.5f }; return m[season()]; }
-static float fruit_mult(void)  { static const float m[4] = { 0.8f, 1.0f, 1.5f, 0.0f }; return m[season()]; }
-
-static void say(const char *s) {
-    strncpy(msg, s, sizeof(msg) - 1); msg[sizeof(msg) - 1] = 0; msgTimer = 3.0f;
+static int blocked(float x, float z, float margin) {
+    for (int i = 0; i < NB; i++)
+        if (fabsf(x - BLD[i].x) < BLD[i].hw + margin && fabsf(z - BLD[i].z) < BLD[i].hd + margin) return 1;
+    if (lake_dist(x, z) < margin + 1.0f) return 1;
+    if (near_road(x, z, margin - 2.0f)) return 1;
+    if (dist2d(x, z, BASE_X, BASE_Z) < SAFE_R + 4.0f) return 1;
+    if (dist2d(x, z, 68, 53) < 19.0f) return 1;
+    return 0;
 }
 
-static void new_mission(int v) {
-    int it;
+/* ---------- mundo ---------- */
+static void add_loot(float x, float z, int kind) {
+    if (nloot >= NLOOT) return;
+    loot[nloot].x = x; loot[nloot].z = z; loot[nloot].kind = kind; loot[nloot].looted = 0; loot[nloot].t = 0;
+    nloot++;
+}
+
+static void respawn_zombie(Zomb *z) {
+    float x, z2; int tries = 0;
     do {
-        it = (int)(frand() * NITEMS);
-        if (it >= NITEMS) it = NITEMS - 1;
-    } while (it == IT_PEIXE && season() == 3);
-    int q = (itemSell[it] >= 14) ? 2 + (int)(frand() * 3) : 3 + (int)(frand() * 4);
-    int rw = (q * itemSell[it] * 17 / 10 / 5) * 5;
-    if (rw < 20) rw = 20;
-    mis[v].item = it; mis[v].qty = q; mis[v].reward = rw;
-}
-
-static void init_animals(Animal *a, int n, float cx, float cz, float half) {
-    for (int i = 0; i < n; i++) {
-        a[i].x = cx + (frand() * 2 - 1) * half;
-        a[i].z = cz + (frand() * 2 - 1) * half;
-        a[i].tx = a[i].x; a[i].tz = a[i].z;
-        a[i].ang = frand() * 6.28f;
-        a[i].t = frand() * 3.0f;
-        a[i].prod = frand() * 20.0f;
-    }
+        x = z->hx + (frand() * 2 - 1) * z->hr;
+        z2 = z->hz + (frand() * 2 - 1) * z->hr;
+    } while (++tries < 20 && (dist2d(x, z2, BASE_X, BASE_Z) < SAFE_R + 3.0f || lake_dist(x, z2) < 1.5f));
+    z->x = x; z->z = z2; z->tx = x; z->tz = z2;
+    z->hp = zHP[z->type]; z->state = 0; z->dead = 0; z->hurt = 0; z->atk = 0; z->t = frand() * 3.0f;
 }
 
 static void init_world(void) {
-    for (int i = 0; i < NPLOTS; i++) {
-        if (i < 12) { plots[i].x = 8.0f + (i % 4) * 4.0f; plots[i].z = -4.0f + (i / 4) * 4.0f; }
-        else { int j = i - 12; plots[i].x = 8.0f + (j % 4) * 4.0f; plots[i].z = 12.0f + (j / 4) * 4.0f; }
-        plots[i].stage = 0; plots[i].t = 0; plots[i].type = 0;
+    nloot = 0;
+    for (int i = 0; i < 8; i++) add_loot(BLD[i].x, BLD[i].z + BLD[i].door * (BLD[i].hd + 1.3f), 0);
+    add_loot(-29, -51.2f, 0);                       /* posto */
+    add_loot(60, 24.8f, 0);                         /* fazenda */
+    add_loot(62, 53.5f, 2); add_loot(74, 59.5f, 2); add_loot(66, 60, 2);   /* militar */
+    for (int i = 0; i < NCARS; i++) add_loot(CARS[i][0] + 2.2f, CARS[i][1] + 1.0f, 1);
+    add_loot(-33, -58, 3); add_loot(66.5f, 20, 3); add_loot(-65, -11.5f, 3); add_loot(70, 48, 3);  /* pecas de radio */
+    for (int i = 0; i < 8; i++) {
+        float x, z; int tries = 0;
+        do { x = (frand() * 2 - 1) * (WORLD - 6); z = (frand() * 2 - 1) * (WORLD - 6); } while (++tries < 30 && blocked(x, z, 3.0f));
+        add_loot(x, z, 0);
     }
     for (int i = 0; i < NTREES; i++) {
-        float x, z;
-        do {
-            x = (frand() * 2 - 1) * (WORLD - 3);
-            z = (frand() * 2 - 1) * (WORLD - 3);
-        } while (dist2d(x, z, 0, 0) < 30.0f || dist2d(x, z, COW_X, COW_Z) < 14.0f ||
-                 dist2d(x, z, PEN_X, PEN_Z) < 14.0f || dist2d(x, z, SHOP_X, SHOP_Z) < 10.0f ||
-                 dist2d(x, z, HOUSE_X, HOUSE_Z) < 12.0f || dist2d(x, z, LAKE_X, LAKE_Z) < 17.0f ||
-                 dist2d(x, z, ORCH_X, ORCH_Z) < 16.0f || dist2d(x, z, 0, -48.0f) < 24.0f);
-        treeX[i] = x; treeZ[i] = z; treeH[i] = 3.0f + frand() * 3.0f;
+        float x, z; int tries = 0;
+        do { x = (frand() * 2 - 1) * (WORLD - 3); z = (frand() * 2 - 1) * (WORLD - 3); } while (++tries < 40 && blocked(x, z, 4.0f));
+        treeX[i] = x; treeZ[i] = z; treeH[i] = 3.5f + frand() * 3.0f;
     }
-    for (int i = 0; i < NFRUIT; i++) {
-        ftree[i].x = ORCH_X + (i % 3) * 5.0f - 5.0f;
-        ftree[i].z = ORCH_Z + (i / 3) * 6.0f - 3.0f;
-        ftree[i].t = frand() * 45.0f;
-        ftree[i].ripe = 0;
+    memset(zomb, 0, sizeof(zomb));
+    int zi = 0;
+    for (int zn = 0; zn < 5; zn++)
+        for (int k = 0; k < ZONES[zn].n && zi < NZREG; k++, zi++) {
+            Zomb *z = &zomb[zi];
+            z->hx = ZONES[zn].x; z->hz = ZONES[zn].z; z->hr = ZONES[zn].r; z->active = 1;
+            z->type = (k < ZONES[zn].brutes) ? 2 : (frand() < 0.3f ? 1 : 0);
+            respawn_zombie(z);
+        }
+    for (; zi < NZREG; zi++) {
+        Zomb *z = &zomb[zi];
+        float x, zz; int tries = 0;
+        do { x = (frand() * 2 - 1) * (WORLD - 8); zz = (frand() * 2 - 1) * (WORLD - 8); } while (++tries < 30 && (blocked(x, zz, 4.0f) || dist2d(x, zz, 0, 0) < 28.0f));
+        z->hx = x; z->hz = zz; z->hr = 10.0f; z->active = 1; z->type = (frand() < 0.3f) ? 1 : 0;
+        respawn_zombie(z);
     }
-    init_animals(chick, NCHICK, PEN_X, PEN_Z, 6.0f);
-    init_animals(cow, NCOW, COW_X, COW_Z, 6.0f);
-    init_animals(pig, NPIG, COW_X, COW_Z, 6.0f);
-    for (int v = 0; v < NNPC; v++) new_mission(v);
+    /* armas coletaveis espalhadas pelo mundo */
+    static const float WP[7][3] = { { -8, -2, 1 }, { 56, 14.5f, 2 }, { -31, -52, 3 }, { 30, -37, 4 }, { 64, 44, 5 }, { -62, -11, 6 }, { 78.5f, 43.5f, 7 } };
+    for (int i = 0; i < 7; i++) { wpick[i].x = WP[i][0]; wpick[i].z = WP[i][1]; wpick[i].w = (int)WP[i][2]; wpick[i].taken = 0; }
+    for (int i = 7; i < NWP; i++) {
+        float x, zz; int tries = 0;
+        do { x = (frand() * 2 - 1) * (WORLD - 8); zz = (frand() * 2 - 1) * (WORLD - 8); } while (++tries < 30 && blocked(x, zz, 3.0f));
+        wpick[i].x = x; wpick[i].z = zz; wpick[i].w = 1 + (int)(frand() * 4.0f); if (wpick[i].w > 4) wpick[i].w = 4; wpick[i].taken = 0;
+    }
 }
 
-/* ---------- salvar / carregar ---------- */
-#define SAVE_MAGIC 0x31475A46u
-#define SAVE_DIR   "ms0:/PSP/SAVEDATA/FAZENDAGS"
-#define SAVE_FILE  SAVE_DIR "/save.dat"
+static void reset_state(void) {
+    memset(inv, 0, sizeof(inv));
+    inv[I_COM] = 2; inv[I_AGUA] = 2; inv[I_BAND] = 1; inv[I_MAD] = 2; inv[I_MUN] = 0;
+    for (int i = 0; i < NW; i++) hasW[i] = 0;
+    hasW[0] = 1; curW = 0; selUse = 0;
+    kills = 0; parts = 0; rescue = 0; deaths = 0; chasers = 0; mode = 0; menuSel = 0; showHelp = 1; endingSeen = 0;
+    px = 3.0f; pz = 5.0f; cam = 0; pang = 0;
+    hp = 100; hunger = 100; thirst = 100; stam = 100;
+    gameTime = 0; rescueT = 0; hordeT = 0; attackCD = 0; swingT = 0; rollT = 0; hurtT = 0; shotT = 0;
+    moanCD = 0; drinkCD = 0; msgTimer = 0; deathT = 0; msg[0] = 0; menuMsg[0] = 0;
+    facingRight = 1; moving = 0; walkPhase = 0;
+}
 
+/* ---------- salvar / carregar (3 slots) ---------- */
+#define SAVE_MAGIC  0x53564753u
+#define SAVE_MAGIC2 0x32565347u
+#define SAVE_DIR    "ms0:/PSP/SAVEDATA/SOBREVIVENDOGS"
 typedef struct {
     unsigned int magic; int version;
-    int money, selCrop, coopEggs, penMilk, penMeat, raining;
-    int boots, fert, feed, landUp, musicOn, houseLvl, missionsDone;
-    int seeds[NTYPES], inv[NITEMS_OLD];
-    int mItem[3], mQty[3], mReward[3];
-    float px, pz, cam, gameTime, weatherT;
-    int stage[NPLOTS], ptype[NPLOTS]; float ptime[NPLOTS];
-    float ftT[NFRUIT]; int ftRipe[NFRUIT];
+    int worldSeed, difficulty, nameIdx, kills, parts, rescue, curW, selUse, deaths, endingSeen;
+    int inv[NITEMS_OLD], hasW[3];
+    float px, pz, cam, gameTime, hp, hunger, thirst, stam, rescueT;
+    unsigned char looted[NLOOT]; float lootT[NLOOT];
 } SaveData;
-typedef struct { unsigned int magic; int inv2[4]; } SaveExtra;
-#define SAVE_MAGIC2 0x32475A46u
-typedef struct { unsigned int magic; int mItem[3], mQty[3], mReward[3]; } SaveExtra2;
-typedef struct { unsigned int magic; int worldSeed, nameIdx, startSeason, difficulty, endingSeen; } SaveExtra3;
-#define SAVE_MAGIC3 0x33475A46u
+typedef struct { unsigned int magic; int inv2[2]; int hasW[NW]; int curW; unsigned char taken[NWP]; } SaveExtra;
 
-static void reset_game_state(void) {
-    money = 50; selCrop = 0; showHelp = 1;
-    seeds[0] = 5; seeds[1] = 5; seeds[2] = 0; seeds[3] = 0;
-    memset(inv, 0, sizeof(inv));
-    coopEggs = penMilk = penMeat = 0;
-    boots = fert = feed = landUp = 0; houseLvl = 1; missionsDone = 0;
-    raining = 0; weatherT = 30.0f; mode = 0; menuSel = 0; menuMsg[0] = 0;
-    gameTime = 0; msg[0] = 0; msgTimer = 0; fishState = 0; fishTimer = 0; sleepFade = 0;
-    px = pz = cam = 0; facingRight = 1; moving = 0; walkPhase = 0;
-    dogX = 2.0f; dogZ = 2.0f; dogTimer = 60.0f; lastDay = -1; endingSeen = 0;
-}
-
-static unsigned int seed_for(int ws) { return ws <= 0 ? 12345u : (unsigned int)ws * 2654435761u + 12345u; }
 static void slot_path(int slot, char *out) { sprintf(out, SAVE_DIR "/save%d.dat", slot + 1); }
-
-static int open_slot_read(int slot) {
-    char p[96]; slot_path(slot, p);
-    int fd = sceIoOpen(p, PSP_O_RDONLY, 0777);
-    if (fd < 0 && slot == 0) fd = sceIoOpen(SAVE_DIR "/save.dat", PSP_O_RDONLY, 0777);
-    return fd;
-}
-
-static void refresh_slots(void) {
-    for (int sl = 0; sl < 3; sl++) {
-        SlotInfo *si = &slotInfos[sl]; memset(si, 0, sizeof(*si));
-        SaveData d; SaveExtra e; SaveExtra2 f; SaveExtra3 g;
-        int fd = open_slot_read(sl);
-        if (fd < 0) continue;
-        int r = sceIoRead(fd, &d, sizeof(d));
-        sceIoRead(fd, &e, sizeof(e));
-        sceIoRead(fd, &f, sizeof(f));
-        int r4 = sceIoRead(fd, &g, sizeof(g));
-        sceIoClose(fd);
-        if (r != (int)sizeof(d) || d.magic != SAVE_MAGIC || d.version != 3) continue;
-        si->used = 1; si->money = d.money; si->day = (int)(d.gameTime / 150.0f) + 1;
-        si->nameIdx = (r4 == (int)sizeof(g) && g.magic == SAVE_MAGIC3 && g.nameIdx >= 0 && g.nameIdx < 8) ? g.nameIdx : 0;
-    }
-}
 
 static int save_game(void) {
     SaveData d; memset(&d, 0, sizeof(d));
-    d.magic = SAVE_MAGIC; d.version = 3;
-    d.money = money; d.selCrop = selCrop; d.coopEggs = coopEggs; d.penMilk = penMilk;
-    d.penMeat = penMeat; d.raining = raining; d.boots = boots; d.fert = fert; d.feed = feed;
-    d.landUp = landUp; d.musicOn = musicOn; d.houseLvl = houseLvl; d.missionsDone = missionsDone;
-    for (int i = 0; i < NTYPES; i++) d.seeds[i] = seeds[i];
+    d.magic = SAVE_MAGIC; d.version = 1;
+    d.worldSeed = worldSeed; d.difficulty = difficulty; d.nameIdx = nameIdx; d.kills = kills; d.parts = parts;
+    d.rescue = rescue; d.selUse = selUse; d.deaths = deaths; d.endingSeen = endingSeen;
+    d.curW = (curW == 2) ? 1 : (curW == 4) ? 2 : 0;
     for (int i = 0; i < NITEMS_OLD; i++) d.inv[i] = inv[i];
-    for (int i = 0; i < 3; i++) { d.mItem[i] = mis[i].item; d.mQty[i] = mis[i].qty; d.mReward[i] = mis[i].reward; }
-    d.px = px; d.pz = pz; d.cam = cam; d.gameTime = gameTime; d.weatherT = weatherT;
-    for (int i = 0; i < NPLOTS; i++) { d.stage[i] = plots[i].stage; d.ptype[i] = plots[i].type; d.ptime[i] = plots[i].t; }
-    for (int i = 0; i < NFRUIT; i++) { d.ftT[i] = ftree[i].t; d.ftRipe[i] = ftree[i].ripe; }
+    d.hasW[0] = hasW[1]; d.hasW[1] = hasW[2]; d.hasW[2] = hasW[4];
+    d.px = px; d.pz = pz; d.cam = cam; d.gameTime = gameTime; d.hp = hp; d.hunger = hunger; d.thirst = thirst;
+    d.stam = stam; d.rescueT = rescueT;
+    for (int i = 0; i < nloot && i < NLOOT; i++) { d.looted[i] = (unsigned char)loot[i].looted; d.lootT[i] = loot[i].t; }
+    SaveExtra e; memset(&e, 0, sizeof(e));
+    e.magic = SAVE_MAGIC2; e.inv2[0] = inv[I_CART]; e.inv2[1] = inv[I_RIFLE]; e.curW = curW;
+    for (int i = 0; i < NW; i++) e.hasW[i] = hasW[i];
+    for (int i = 0; i < NWP; i++) e.taken[i] = (unsigned char)wpick[i].taken;
     sceIoMkdir("ms0:/PSP", 0777);
     sceIoMkdir("ms0:/PSP/SAVEDATA", 0777);
     sceIoMkdir(SAVE_DIR, 0777);
@@ -503,219 +529,373 @@ static int save_game(void) {
     int fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
     if (fd < 0) return 0;
     int w = sceIoWrite(fd, &d, sizeof(d));
-    SaveExtra e; e.magic = SAVE_MAGIC;
-    for (int i = 0; i < 4; i++) e.inv2[i] = inv[NITEMS_OLD + i];
     int w2 = sceIoWrite(fd, &e, sizeof(e));
-    SaveExtra2 f; f.magic = SAVE_MAGIC2;
-    for (int i = 0; i < 3; i++) { f.mItem[i] = mis[3 + i].item; f.mQty[i] = mis[3 + i].qty; f.mReward[i] = mis[3 + i].reward; }
-    int w3 = sceIoWrite(fd, &f, sizeof(f));
-    SaveExtra3 g; g.magic = SAVE_MAGIC3; g.worldSeed = worldSeed; g.nameIdx = worldName;
-    g.startSeason = startSeason; g.difficulty = difficulty; g.endingSeen = endingSeen;
-    int w4 = sceIoWrite(fd, &g, sizeof(g));
     sceIoClose(fd);
-    return w == (int)sizeof(d) && w2 == (int)sizeof(e) && w3 == (int)sizeof(f) && w4 == (int)sizeof(g);
+    return w == (int)sizeof(d) && w2 == (int)sizeof(e);
+}
+
+static int read_slot(int slot, SaveData *d, SaveExtra *e, int *hasE) {
+    char p[96]; slot_path(slot, p);
+    int fd = sceIoOpen(p, PSP_O_RDONLY, 0777);
+    if (fd < 0) return 0;
+    int r = sceIoRead(fd, d, sizeof(*d));
+    int r2 = sceIoRead(fd, e, sizeof(*e));
+    sceIoClose(fd);
+    *hasE = (r2 == (int)sizeof(*e) && e->magic == SAVE_MAGIC2);
+    return r == (int)sizeof(*d) && d->magic == SAVE_MAGIC && d->version == 1;
+}
+
+static void refresh_slots(void) {
+    for (int s = 0; s < 3; s++) {
+        SaveData d; SaveExtra e; int he; SlotInfo *si = &slotInfos[s]; memset(si, 0, sizeof(*si));
+        if (!read_slot(s, &d, &e, &he)) continue;
+        si->used = 1; si->nameIdx = (d.nameIdx >= 0 && d.nameIdx < 8) ? d.nameIdx : 0;
+        si->day = (int)((d.gameTime / DAY_LEN * 24.0f + 8.0f) / 24.0f) + 1; si->parts = d.parts; si->kills = d.kills;
+    }
 }
 
 static int load_game(void) {
-    SaveData d;
-    int fd = open_slot_read(curSlot);
-    if (fd < 0) return 0;
-    int r = sceIoRead(fd, &d, sizeof(d));
-    SaveExtra e; int r2 = sceIoRead(fd, &e, sizeof(e));
-    SaveExtra2 f; int r3 = sceIoRead(fd, &f, sizeof(f));
-    SaveExtra3 g; int r4 = sceIoRead(fd, &g, sizeof(g));
-    sceIoClose(fd);
-    if (r != (int)sizeof(d) || d.magic != SAVE_MAGIC || d.version != 3) return 0;
-    reset_game_state();
-    if (r4 == (int)sizeof(g) && g.magic == SAVE_MAGIC3) {
-        worldSeed = g.worldSeed;
-        worldName = (g.nameIdx >= 0 && g.nameIdx < 8) ? g.nameIdx : 0;
-        startSeason = (g.startSeason >= 0 && g.startSeason < 4) ? g.startSeason : 0;
-        difficulty = (g.difficulty >= 0 && g.difficulty < 3) ? g.difficulty : 1;
-        endingSeen = g.endingSeen ? 1 : 0;
-    } else { worldSeed = 0; worldName = 0; startSeason = 0; difficulty = 1; endingSeen = 0; }
+    SaveData d; SaveExtra e; int he = 0;
+    if (!read_slot(curSlot, &d, &e, &he)) return 0;
+    reset_state();
+    worldSeed = d.worldSeed; difficulty = (d.difficulty >= 0 && d.difficulty < 3) ? d.difficulty : 1;
+    nameIdx = (d.nameIdx >= 0 && d.nameIdx < 8) ? d.nameIdx : 0;
     seed_rng = seed_for(worldSeed);
     init_world();
-    money = d.money; selCrop = d.selCrop; coopEggs = d.coopEggs; penMilk = d.penMilk;
-    penMeat = d.penMeat; raining = d.raining; boots = d.boots; fert = d.fert; feed = d.feed;
-    landUp = d.landUp; musicOn = d.musicOn; houseLvl = d.houseLvl; missionsDone = d.missionsDone;
-    if (selCrop < 0 || selCrop >= NTYPES) selCrop = 0;
-    if (houseLvl < 1 || houseLvl > 3) houseLvl = 1;
-    for (int i = 0; i < NTYPES; i++) seeds[i] = d.seeds[i];
+    kills = d.kills; parts = d.parts; rescue = (d.rescue == 1 || d.rescue == 2) ? 0 : d.rescue; selUse = d.selUse;
+    deaths = d.deaths; endingSeen = d.endingSeen ? 1 : 0;
     for (int i = 0; i < NITEMS_OLD; i++) inv[i] = d.inv[i];
-    if (r2 == (int)sizeof(e) && e.magic == SAVE_MAGIC)
-        for (int i = 0; i < 4; i++) inv[NITEMS_OLD + i] = e.inv2[i];
-    if (r3 == (int)sizeof(f) && f.magic == SAVE_MAGIC2)
-        for (int i = 0; i < 3; i++) {
-            mis[3 + i].item = f.mItem[i]; mis[3 + i].qty = f.mQty[i]; mis[3 + i].reward = f.mReward[i];
-            if (mis[3 + i].item < 0 || mis[3 + i].item >= NITEMS || mis[3 + i].qty < 1) new_mission(3 + i);
-        }
-    for (int i = 0; i < 3; i++) {
-        mis[i].item = d.mItem[i]; mis[i].qty = d.mQty[i]; mis[i].reward = d.mReward[i];
-        if (mis[i].item < 0 || mis[i].item >= NITEMS || mis[i].qty < 1) new_mission(i);
+    if (he) {
+        inv[I_CART] = e.inv2[0]; inv[I_RIFLE] = e.inv2[1];
+        for (int i = 0; i < NW; i++) hasW[i] = e.hasW[i] ? 1 : 0;
+        curW = e.curW;
+        for (int i = 0; i < NWP; i++) wpick[i].taken = e.taken[i] ? 1 : 0;
+    } else {
+        static const int mp[3] = { 1, 2, 4 };
+        hasW[1] = d.hasW[0]; hasW[2] = d.hasW[1]; hasW[4] = d.hasW[2];
+        curW = (d.curW >= 0 && d.curW < 3) ? mp[d.curW] : 0;
     }
-    px = d.px; pz = d.pz; cam = d.cam; gameTime = d.gameTime; weatherT = d.weatherT;
-    for (int i = 0; i < NPLOTS; i++) {
-        plots[i].stage = d.stage[i]; plots[i].type = d.ptype[i]; plots[i].t = d.ptime[i];
-        if (plots[i].stage < 0 || plots[i].stage > 3) plots[i].stage = 0;
-        if (plots[i].type < 0 || plots[i].type >= NTYPES) plots[i].type = 0;
-    }
-    for (int i = 0; i < NFRUIT; i++) { ftree[i].t = d.ftT[i]; ftree[i].ripe = d.ftRipe[i] ? 1 : 0; }
+    hasW[0] = 1;
+    if (curW < 0 || curW >= NW || !hasW[curW]) curW = 0;
+    if (selUse < 0 || selUse > 2) selUse = 0;
+    px = d.px; pz = d.pz; cam = d.cam; gameTime = d.gameTime; hp = d.hp; hunger = d.hunger; thirst = d.thirst;
+    stam = d.stam; rescueT = d.rescueT;
+    if (hp < 20) hp = 20;
+    for (int i = 0; i < nloot && i < NLOOT; i++) { loot[i].looted = d.looted[i] ? 1 : 0; loot[i].t = d.lootT[i]; }
     return 1;
 }
 
-static void check_ending(void) {
-    if (!endingSeen && houseLvl >= 3 && missionsDone >= 10) {
-        endingSeen = 1; creditsFromGame = 1; appState = APP_CREDITS;
-        creditsY = 272.0f; appT = 0; mode = 0;
-        save_game();
-    }
-}
-
 static void create_world(void) {
-    reset_game_state();
+    reset_state();
     worldSeed = nwSeed ? nwSeed : (int)(sceKernelGetSystemTimeLow() % 99u) + 1;
-    worldName = nwName; startSeason = nwSeason; difficulty = nwDiff;
+    nameIdx = nwName; difficulty = nwDiff; curSlot = nwSlot;
     seed_rng = seed_for(worldSeed);
     init_world();
-    money = diffMoney[difficulty];
-    gameTime = startSeason * SEASON_LEN;
-    curSlot = nwSlot;
     save_game();
 }
 
-/* ---------- logica ---------- */
-static int near_area(float cx, float cz) { return fabsf(px - cx) < 9.0f && fabsf(pz - cz) < 9.0f; }
-static int at_market(void) { return NEAR(MKT_X, MKT_Z, 6.0f); }
-static int near_shop(void) { return NEAR(SHOP_X, SHOP_Z, 6.0f); }
-static int near_house(void) { return NEAR(HOUSE_X, HOUSE_Z + 3.0f, 6.0f); }
-static int near_hall(void) { return NEAR(HALL_X, HALL_Z + 3.0f, 8.0f); }
-static int near_barn(void) { return NEAR(BARN_X, BARN_Z + 3.5f, 6.5f); }
-static int near_fest(void) { return festival_active() && NEAR(FEST_X, FEST_Z + 2.0f, 5.5f); }
-
-static float lake_dist(float x, float z) {
-    float dx = fabsf(x - LAKE_X) - LAKE_HX, dz = fabsf(z - LAKE_Z) - LAKE_HZ;
-    if (dx < 0) dx = 0;
-    if (dz < 0) dz = 0;
-    return sqrtf(dx * dx + dz * dz);
+static void check_ending(void) {
+    endingSeen = 1; creditsFromGame = 1; appState = APP_CREDITS; creditsY = 272.0f; appT = 0; mode = 0;
+    rescue = 0; save_game();
 }
-static int in_lake(float x, float z) {
-    return fabsf(x - LAKE_X) < LAKE_HX && fabsf(z - LAKE_Z) < LAKE_HZ;
-}
-static int near_lake(void) { return lake_dist(px, pz) < 3.5f; }
 
-static int nearest_plot(void) {
-    int best = -1; float bd = 3.0f;
-    for (int i = 0; i < nplots(); i++) {
-        float d = dist2d(plots[i].x, plots[i].z, px, pz);
+/* ---------- jogador ---------- */
+static void open_loot(int i) {
+    static const int wt[7] = { 3, 3, 3, 2, 2, 1, 2 };   /* madeira sucata pano comida agua bandagem municao */
+    Loot *L = &loot[i]; int got[NITEMS]; memset(got, 0, sizeof(got)); int wdrop = -1;
+    if (L->kind == 0) {
+        int rolls = 2 + (frand() < 0.5f ? 1 : 0);
+        for (int r = 0; r < rolls; r++) {
+            float tot = 16.0f, v = frand() * tot, acc = 0; int it = 0;
+            for (int k = 0; k < 7; k++) { acc += wt[k]; if (v <= acc) { it = k; break; } it = k; }
+            got[it] += 1 + (it < 3 ? (int)(frand() * 2) : 0);
+        }
+    } else if (L->kind == 1) {
+        got[I_SUC] = 1 + (int)(frand() * 3);
+        if (frand() < 0.4f) got[I_MUN] = 2 + (int)(frand() * 3);
+        if (frand() < 0.25f) got[I_COM] = 1;
+    } else if (L->kind == 2) {
+        got[I_MUN] = 5 + (int)(frand() * 6);
+        if (frand() < 0.6f) got[I_BAND] = 1;
+        got[frand() < 0.5f ? I_COM : I_AGUA] = 1; got[I_SUC] += 1;
+        if (frand() < 0.15f) { int c = 4 + (int)(frand() * 4.0f); if (c > 7) c = 7; if (!hasW[c]) wdrop = c; }
+    } else {
+        got[I_PECA] = 1; got[I_MUN] = 2 + (int)(frand() * 3); got[I_BAND] = 1;
+    }
+    char b[64]; b[0] = 0; int n = 0;
+    for (int k = 0; k < NITEMS; k++) if (got[k]) {
+        inv[k] += got[k]; if (k == I_PECA) parts++;
+        char t[24]; sprintf(t, "%s%d %s", n ? ", " : "", got[k], itemName[k]);
+        if (strlen(b) + strlen(t) < 40) strcat(b, t);
+        n++;
+    }
+    if (wdrop >= 0) {
+        hasW[wdrop] = 1; curW = wdrop; if (wAmmo[wdrop] >= 0) inv[wAmmo[wdrop]] += wGive[wdrop];
+        char t[24]; sprintf(t, "%s%s", n ? ", " : "", wName[wdrop]); if (strlen(b) + strlen(t) < 40) strcat(b, t);
+    }
+    char m[64]; sprintf(m, "Achou: %s", b[0] ? b : "nada");
+    say(m); L->looted = 1; L->t = (L->kind == 3) ? 1e9f : 600.0f; play_sfx(L->kind == 3 ? 11 : 9);
+}
+
+static void player_die(void) {
+    mode = 3; deathT = 0; deaths++; play_sfx(10);
+}
+
+static void hurt_player(float dmg) {
+    if (rollT > 0 || mode == 3) return;
+    hp -= dmg * diffDmg[difficulty]; hurtT = 0.4f; play_sfx(6);
+    if (hp <= 0) { hp = 0; player_die(); }
+}
+
+static void kill_zombie(Zomb *z) {
+    z->state = 2; z->dead = 90.0f + frand() * 60.0f; z->corpse = 3.5f; kills++; play_sfx(3);
+    if (z->type == 2) { int it = (frand() < 0.5f) ? I_MUN : I_CART; inv[it] += 3; char mm[48]; sprintf(mm, "Brutamontes caiu! +3 %s", itemName[it]); say(mm); }
+    if (frand() < 0.45f) {
+        int it = (int)(frand() * 5); static const int tbl[5] = { I_PANO, I_SUC, I_COM, I_MUN, I_MAD };
+        inv[tbl[it]]++; char m[48]; sprintf(m, "Zumbi derrubado! +1 %s", itemName[tbl[it]]); say(m);
+    }
+    if (z->horde) z->active = 0;
+}
+
+static void damage_zombie(Zomb *z, float dmg, float fx, float fz) {
+    z->hp -= dmg; z->hurt = 0.3f; z->x += fx * 0.8f; z->z += fz * 0.8f; z->state = 1;
+    if (z->hp <= 0) kill_zombie(z); else play_sfx(3);
+}
+
+static int nearest_zombie(float maxd, float *outd) {
+    int best = -1; float bd = maxd;
+    for (int i = 0; i < NZ; i++) {
+        Zomb *z = &zomb[i];
+        if (!z->active || z->state == 2) continue;
+        float d = dist2d(px, pz, z->x, z->z);
+        if (d < bd) { bd = d; best = i; }
+    }
+    if (outd) *outd = bd;
+    return best;
+}
+
+static int aim_target(float maxd, float maxAng) {
+    int best = -1; float bd = maxd;
+    for (int i = 0; i < NZ; i++) {
+        Zomb *z = &zomb[i];
+        if (!z->active || z->state == 2) continue;
+        float dx = z->x - px, dz = z->z - pz, d = sqrtf(dx * dx + dz * dz);
+        float da = atan2f(dx, dz) - pang;
+        while (da > PI_F) da -= 2.0f * PI_F;
+        while (da < -PI_F) da += 2.0f * PI_F;
+        if (d < bd && fabsf(da) < maxAng) { bd = d; best = i; }
+    }
+    return best;
+}
+
+static float ray_hit(float fx, float fz, float rng, int *hit) {
+    float bt = rng; *hit = -1;
+    for (int i = 0; i < NZ; i++) {
+        Zomb *z = &zomb[i];
+        if (!z->active || z->state == 2) continue;
+        float dx = z->x - px, dz = z->z - pz, along = dx * fx + dz * fz, perp = fabsf(dx * fz - dz * fx);
+        if (along > 0 && along < bt && perp < 0.9f) { bt = along; *hit = i; }
+    }
+    return bt;
+}
+
+static void player_attack(void) {
+    if (attackCD > 0 || rollT > 0 || mode != 0) return;
+    int w = curW, ai = wAmmo[w];
+    float rng = wRange[w];
+    if (ai >= 0 && inv[ai] <= 0) { say("Sem municao!"); play_sfx(10); attackCD = 0.3f; return; }
+    int t = aim_target(ai >= 0 ? rng : 3.8f, ai >= 0 ? 1.1f : 2.2f);
+    if (t >= 0) pang = atan2f(zomb[t].x - px, zomb[t].z - pz);
+    float fx = sinf(pang), fz = cosf(pang);
+    attackCD = wCD[w];
+    if (ai >= 0) {
+        inv[ai]--; play_sfx(1); shotT = 0.1f;
+        int hit; float bt;
+        if (w == 6) {
+            static const float off[5] = { -0.16f, -0.08f, 0.0f, 0.08f, 0.16f };
+            bt = rng;
+            for (int k = 0; k < 5; k++) {
+                float a2 = pang + off[k], gx = sinf(a2), gz = cosf(a2); int h2;
+                float t2 = ray_hit(gx, gz, rng, &h2);
+                if (k == 2) { bt = t2; fx = gx; fz = gz; }
+                if (h2 >= 0) damage_zombie(&zomb[h2], wDmg[w], gx, gz);
+            }
+        } else {
+            bt = ray_hit(fx, fz, rng, &hit);
+            if (hit >= 0) damage_zombie(&zomb[hit], wDmg[w], fx, fz);
+        }
+        shotX1 = px + fx * 0.8f; shotZ1 = pz + fz * 0.8f; shotX2 = px + fx * bt; shotZ2 = pz + fz * bt;
+    } else {
+        swingT = 0.18f; play_sfx(2);
+        for (int i = 0; i < NZ; i++) {
+            Zomb *z = &zomb[i];
+            if (!z->active || z->state == 2) continue;
+            float dx = z->x - px, dz = z->z - pz, d = sqrtf(dx * dx + dz * dz);
+            if (d < rng + 0.6f && (d < 0.3f || (dx * fx + dz * fz) / d > 0.2f)) damage_zombie(z, wDmg[w], fx, fz);
+        }
+    }
+}
+
+static int nearest_wpick(void) {
+    int best = -1; float bd = 2.6f;
+    for (int i = 0; i < NWP; i++) {
+        if (wpick[i].taken) continue;
+        float d = dist2d(px, pz, wpick[i].x, wpick[i].z);
         if (d < bd) { bd = d; best = i; }
     }
     return best;
 }
 
-static int nearest_fruit(void) {
-    int best = -1; float bd = 3.0f;
-    for (int i = 0; i < NFRUIT; i++) {
-        float d = dist2d(ftree[i].x, ftree[i].z, px, pz);
+static void take_weapon(int i) {
+    int w = wpick[i].w; char m[64];
+    wpick[i].taken = 1;
+    if (wAmmo[w] >= 0) inv[wAmmo[w]] += wGive[w];
+    if (!hasW[w]) { hasW[w] = 1; curW = w; sprintf(m, "Pegou: %s!", wName[w]); }
+    else sprintf(m, "Ja tem %s: +%d %s", wName[w], wGive[w], wAmmo[w] >= 0 ? itemName[wAmmo[w]] : "nada");
+    say(m); play_sfx(9);
+}
+
+static void use_item(void) {
+    if (selUse == 0) { if (inv[I_COM] > 0) { inv[I_COM]--; hunger += 35; if (hunger > 100) hunger = 100; say("Comeu. Fome restaurada."); play_sfx(4); } else { say("Sem comida!"); play_sfx(10); } }
+    else if (selUse == 1) { if (inv[I_AGUA] > 0) { inv[I_AGUA]--; thirst += 40; if (thirst > 100) thirst = 100; say("Bebeu agua."); play_sfx(4); } else { say("Sem agua!"); play_sfx(10); } }
+    else { if (inv[I_BAND] > 0) { inv[I_BAND]--; hp += 40; if (hp > 100) hp = 100; say("Usou bandagem. Vida restaurada."); play_sfx(4); } else { say("Sem bandagem!"); play_sfx(10); } }
+}
+
+static int near_camp(void) { return NEAR(BASE_X, BASE_Z, 4.5f); }
+static int near_lake(void) { return lake_dist(px, pz) < 3.0f; }
+static int near_heli(void) { return rescue == 2 && NEAR(HELI_X, HELI_Z, 6.0f); }
+static int nearest_loot(void) {
+    int best = -1; float bd = 2.6f;
+    for (int i = 0; i < nloot; i++) {
+        if (loot[i].looted) continue;
+        float d = dist2d(px, pz, loot[i].x, loot[i].z);
         if (d < bd) { bd = d; best = i; }
     }
     return best;
 }
 
-static int nearest_npc(void) {
-    for (int i = 0; i < NNPC; i++) if (NEAR(npcX[i], npcZ[i], 3.5f)) return i;
-    return -1;
+static void interact(void) {
+    int l;
+    if (near_heli()) { play_sfx(12); check_ending(); return; }
+    if (near_camp()) { mode = 2; menuSel = 0; menuMsg[0] = 0; play_sfx(5); return; }
+    l = nearest_wpick();
+    if (l >= 0) { take_weapon(l); return; }
+    l = nearest_loot();
+    if (l >= 0) { open_loot(l); return; }
+    if (near_lake()) {
+        if (drinkCD > 0) return;
+        thirst += 30; if (thirst > 100) thirst = 100; drinkCD = 1.0f; say("Bebeu agua do lago."); play_sfx(4); return;
+    }
+    say("Nada para fazer aqui."); play_sfx(10);
 }
 
-static void animal_wander(Animal *a, float cx, float cz, float half, float speed, float dt) {
-    a->t -= dt;
-    if (a->t <= 0) {
-        a->tx = cx + (frand() * 2 - 1) * half;
-        a->tz = cz + (frand() * 2 - 1) * half;
-        a->t = 2.0f + frand() * 4.0f;
-    }
-    float dx = a->tx - a->x, dz = a->tz - a->z;
-    float d = sqrtf(dx * dx + dz * dz);
-    if (d > 0.2f) {
-        a->x += dx / d * speed * dt;
-        a->z += dz / d * speed * dt;
-        a->ang = atan2f(dx, dz);
+/* ---------- zumbis ---------- */
+static void zombies_update(float dt) {
+    float night = nightness();
+    float aggro = 14.0f + 12.0f * night;
+    int inSafe = (rescue == 0) && dist2d(px, pz, BASE_X, BASE_Z) < SAFE_R;
+    chasers = 0;
+    if (moanCD > 0) moanCD -= dt;
+    for (int i = 0; i < NZ; i++) {
+        Zomb *z = &zomb[i];
+        if (!z->active) continue;
+        if (z->state == 2) {
+            if (z->corpse > 0) z->corpse -= dt;
+            z->dead -= dt;
+            if (z->dead <= 0 && i < NZREG) { z->state = 0; respawn_zombie(z); }
+            continue;
+        }
+        if (z->hurt > 0) z->hurt -= dt;
+        if (z->atk > 0) z->atk -= dt;
+        float dx = px - z->x, dz = pz - z->z, d = sqrtf(dx * dx + dz * dz);
+        float sp = zSpeed[z->type] * diffSpd[difficulty] * (1.0f + 0.15f * night);
+        if (z->hurt > 0.15f) continue;
+        if (z->state == 0) {
+            z->t -= dt;
+            if (z->t <= 0) { z->tx = z->hx + (frand() * 2 - 1) * z->hr; z->tz = z->hz + (frand() * 2 - 1) * z->hr; z->t = 3.0f + frand() * 4.0f; }
+            float tx = z->tx - z->x, tz = z->tz - z->z, td = sqrtf(tx * tx + tz * tz);
+            if (td > 0.6f) { z->x += tx / td * 1.1f * dt; z->z += tz / td * 1.1f * dt; z->ang = atan2f(tx, tz); }
+            if (!inSafe && d < aggro * (z->type == 1 ? 1.2f : 1.0f)) {
+                z->state = 1;
+                if (moanCD <= 0 && d < 20.0f) { play_sfx(7); moanCD = 4.0f; }
+            }
+        } else {
+            if (inSafe || (!z->horde && d > aggro * 2.0f)) z->state = 0;
+            else {
+                if (d > 1.0f) { z->x += dx / d * sp * dt; z->z += dz / d * sp * dt; } if (d > 0.01f) z->ang = atan2f(dx, dz);
+                if (d < 1.7f && z->atk <= 0) { z->atk = 1.0f; hurt_player(zDmg[z->type]); }
+                if (d < 22.0f) chasers++;
+            }
+        }
+        collide(&z->x, &z->z, 0.5f);
+        if (rescue == 0) {
+            float bd = dist2d(z->x, z->z, BASE_X, BASE_Z);
+            if (bd < SAFE_R && bd > 0.001f) { z->x = BASE_X + (z->x - BASE_X) / bd * SAFE_R; z->z = BASE_Z + (z->z - BASE_Z) / bd * SAFE_R; }
+        }
     }
 }
 
-/* crescimento e producao (usado ao jogar e ao dormir) */
-static void grow_world(float dt, float gm) {
-    float fm = feed ? 1.5f : 1.0f;
-    for (int i = 0; i < NCHICK; i++) {
-        chick[i].prod += dt * fm;
-        if (chick[i].prod >= 25.0f) { chick[i].prod = 0; if (coopEggs < 24) coopEggs++; }
-    }
-    for (int i = 0; i < NCOW; i++) {
-        cow[i].prod += dt * fm;
-        if (cow[i].prod >= 40.0f) { cow[i].prod = 0; if (penMilk < 12) penMilk++; }
-    }
-    for (int i = 0; i < NPIG; i++) {
-        pig[i].prod += dt * fm;
-        if (pig[i].prod >= 60.0f) { pig[i].prod = 0; if (penMeat < 12) penMeat++; }
-    }
-    for (int i = 0; i < nplots(); i++) {
-        if (plots[i].stage >= 1 && plots[i].stage < 3) {
-            plots[i].t += dt * gm;
-            if (plots[i].t >= cropGrow[plots[i].type]) { plots[i].t = 0; plots[i].stage++; }
-        }
-    }
-    for (int i = 0; i < NFRUIT; i++) {
-        if (!ftree[i].ripe) {
-            ftree[i].t += dt * fruit_mult();
-            if (ftree[i].t >= 45.0f) { ftree[i].t = 0; ftree[i].ripe = 1; }
-        }
+static void spawn_horde(int n) {
+    for (int i = NZREG; i < NZ && n > 0; i++) {
+        Zomb *z = &zomb[i];
+        if (z->active) continue;
+        float a = frand() * 6.283f;
+        z->x = BASE_X + cosf(a) * 38.0f; z->z = BASE_Z + sinf(a) * 38.0f;
+        z->hx = BASE_X; z->hz = BASE_Z; z->hr = 8.0f;
+        z->type = (frand() < 0.3f) ? 1 : 0; z->hp = zHP[z->type]; z->state = 1; z->active = 1; z->horde = 1; z->hurt = 0; z->atk = 0;
+        n--;
     }
 }
 
 static void do_sleep(void) {
-    float tod = fmodf(gameTime, 150.0f);
-    float skip = 150.0f - tod;
-    if (skip < 40.0f) skip += 150.0f;
+    float hrs = gameTime / DAY_LEN * 24.0f + 8.0f;
+    float target = (floorf((hrs - 7.0f) / 24.0f) + 1.0f) * 24.0f + 7.0f;
+    float skip = (target - hrs) / 24.0f * DAY_LEN;
     gameTime += skip;
-    grow_world(skip * (0.2f + 0.2f * houseLvl), (fert ? 1.5f : 1.0f) * season_mult());
-    raining = 0; weatherT = 40.0f + frand() * 40.0f;
-    sleepFade = 2.0f;
-    say(save_game() ? "Dormiu bem! Jogo salvo." : "Dormiu bem! (erro ao salvar)");
-    play_sfx(2);
+    hp += 60; if (hp > 100) hp = 100;
+    hunger -= 15; if (hunger < 5) hunger = 5;
+    thirst -= 20; if (thirst < 5) thirst = 5;
+    for (int i = 0; i < nloot; i++) if (loot[i].looted && loot[i].kind != 3) { loot[i].t -= skip; if (loot[i].t <= 0) loot[i].looted = 0; }
+    for (int i = 0; i < NZREG; i++) if (zomb[i].active && zomb[i].state == 2) { zomb[i].state = 0; respawn_zombie(&zomb[i]); }
+    say(save_game() ? "Dormiu. Novo dia! Jogo salvo." : "Dormiu. Novo dia! (erro ao salvar)");
+    play_sfx(4);
 }
 
-static int deliver(int v) {
-    if (inv[mis[v].item] < mis[v].qty) return 0;
-    inv[mis[v].item] -= mis[v].qty;
-    int rw = festival_active() ? mis[v].reward * 3 / 2 : mis[v].reward;
-    money += rw;
-    missionsDone++;
-    char b[64]; sprintf(b, "Missao feita! +$%d", rw);
-    say(b); play_sfx(3);
-    new_mission(v);
-    check_ending();
-    return 1;
-}
 
-static void fishing_press(void) {
-    if (season() == 3) { say("O lago esta congelado!"); play_sfx(5); fishState = 0; return; }
-    if (fishState == 0) {
-        fishState = 1; fishTimer = 2.0f + frand() * 4.0f; say("Lancou a linha..."); play_sfx(4);
-    } else if (fishState == 1) {
-        fishState = 0; say("Cedo demais! O peixe fugiu."); play_sfx(5);
-    } else {
-        fishState = 0; inv[IT_PEIXE]++; say("Pegou um peixe!"); play_sfx(2);
+static void camp_update(unsigned int pressed) {
+    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 6) % 7; play_sfx(5); }
+    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 7; play_sfx(5); }
+    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) { mode = 0; return; }
+    if (pressed & PSP_CTRL_CROSS) {
+        if (menuSel == 0) {
+            if (inv[I_PANO] >= 2) { inv[I_PANO] -= 2; inv[I_BAND]++; strcpy(menuMsg, "Fabricou 1 Bandagem!"); play_sfx(4); }
+            else { strcpy(menuMsg, "Faltam materiais!"); play_sfx(10); }
+        } else if (menuSel == 1) {
+            if (inv[I_SUC] >= 2) { inv[I_SUC] -= 2; inv[I_MUN] += 6; strcpy(menuMsg, "Fabricou 6 Municao!"); play_sfx(4); }
+            else { strcpy(menuMsg, "Faltam materiais!"); play_sfx(10); }
+        } else if (menuSel == 2) {
+            if (inv[I_SUC] >= 3) { inv[I_SUC] -= 3; inv[I_CART] += 4; strcpy(menuMsg, "Fabricou 4 Cartuchos!"); play_sfx(4); }
+            else { strcpy(menuMsg, "Faltam materiais!"); play_sfx(10); }
+        } else if (menuSel == 3) {
+            if (inv[I_SUC] >= 4) { inv[I_SUC] -= 4; inv[I_RIFLE] += 3; strcpy(menuMsg, "Fabricou 3 Balas de rifle!"); play_sfx(4); }
+            else { strcpy(menuMsg, "Faltam materiais!"); play_sfx(10); }
+        } else if (menuSel == 4) {
+            do_sleep(); mode = 0;
+        } else if (menuSel == 5) {
+            if (rescue != 0) { strcpy(menuMsg, "O resgate ja foi chamado!"); play_sfx(10); }
+            else if (parts < 4) { sprintf(menuMsg, "Faltam %d pecas de radio!", 4 - parts); play_sfx(10); }
+            else { rescue = 1; rescueT = 100.0f; hordeT = 3.0f; mode = 0; say("Resgate chamado! Aguente 100 segundos!"); play_sfx(11); }
+        } else mode = 0;
     }
 }
 
-/* ---------- menus ---------- */
-static void menu_update(unsigned int pressed) {
-    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 5) % 6; play_sfx(4); }
-    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 6; play_sfx(4); }
+static void pause_update(unsigned int pressed) {
+    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 5) % 6; play_sfx(5); }
+    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 6; play_sfx(5); }
     if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE)) { mode = 0; return; }
     if (pressed & PSP_CTRL_CROSS) {
         if (menuSel == 0) mode = 0;
-        else if (menuSel == 1) { musicOn = !musicOn; play_sfx(4); }
+        else if (menuSel == 1) { musicOn = !musicOn; play_sfx(5); }
         else if (menuSel == 2) strcpy(menuMsg, save_game() ? "Jogo salvo!" : "Erro ao salvar!");
         else if (menuSel == 3) {
             if (save_game()) { mode = 0; appState = APP_TITLE; titleSel = 0; }
@@ -725,108 +905,24 @@ static void menu_update(unsigned int pressed) {
     }
 }
 
-static int shop_owned(int i) { return i == 0 ? boots : i == 1 ? fert : i == 2 ? feed : landUp; }
-
-static void shop_update(unsigned int pressed) {
-    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 4) % 5; play_sfx(4); }
-    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 5; play_sfx(4); }
-    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) { mode = 0; return; }
-    if (pressed & PSP_CTRL_CROSS) {
-        if (menuSel == 4) { mode = 0; return; }
-        if (shop_owned(menuSel)) { strcpy(menuMsg, "Voce ja comprou!"); play_sfx(5); }
-        else if (money < shopPrice[menuSel]) { strcpy(menuMsg, "Dinheiro insuficiente!"); play_sfx(5); }
-        else {
-            money -= shopPrice[menuSel];
-            if (menuSel == 0) boots = 1;
-            else if (menuSel == 1) fert = 1;
-            else if (menuSel == 2) feed = 1;
-            else landUp = 1;
-            strcpy(menuMsg, "Comprado!"); play_sfx(3);
-        }
-    }
-}
-
-static void house_update(unsigned int pressed) {
-    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 2) % 3; play_sfx(4); }
-    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 3; play_sfx(4); }
-    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) { mode = 0; return; }
-    if (pressed & PSP_CTRL_CROSS) {
-        if (menuSel == 0) { do_sleep(); mode = 0; }
-        else if (menuSel == 1) {
-            if (houseLvl >= 3) { strcpy(menuMsg, "Casa no nivel maximo!"); play_sfx(5); }
-            else if (money < houseCost[houseLvl]) { strcpy(menuMsg, "Dinheiro insuficiente!"); play_sfx(5); }
-            else {
-                money -= houseCost[houseLvl]; houseLvl++; play_sfx(3);
-                if (houseLvl == 3) { money += 500; strcpy(menuMsg, "Casa dos sonhos! +$500"); }
-                else strcpy(menuMsg, "Casa melhorada!");
-                check_ending();
-            }
-        } else mode = 0;
-    }
-}
-
-static void hall_update(unsigned int pressed) {
-    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) { mode = 0; return; }
-    if (pressed & PSP_CTRL_CROSS) {
-        int n = 0;
-        for (int v = 0; v < NNPC; v++) n += deliver(v);
-        if (n == 0) { strcpy(menuMsg, "Nada para entregar ainda."); play_sfx(5); }
-        else strcpy(menuMsg, "Pedidos entregues!");
-    }
-}
-
-static void barn_update(unsigned int pressed) {
-    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 4) % 5; play_sfx(4); }
-    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 5; play_sfx(4); }
-    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) { mode = 0; return; }
-    if (pressed & PSP_CTRL_CROSS) {
-        if (menuSel == 4) { mode = 0; return; }
-        if (inv[recIn[menuSel]] >= recQty[menuSel]) {
-            inv[recIn[menuSel]] -= recQty[menuSel];
-            inv[recOut[menuSel]]++;
-            sprintf(menuMsg, "Fabricou %s!", itemName[recOut[menuSel]]);
-            play_sfx(2);
-        } else {
-            sprintf(menuMsg, "Faltam %d %s!", recQty[menuSel] - inv[recIn[menuSel]], itemName[recIn[menuSel]]);
-            play_sfx(5);
-        }
-    }
-}
-
-static void fest_update(unsigned int pressed) {
-    if (pressed & PSP_CTRL_UP)   { menuSel = (menuSel + 2) % 3; play_sfx(4); }
-    if (pressed & PSP_CTRL_DOWN) { menuSel = (menuSel + 1) % 3; play_sfx(4); }
-    if (pressed & (PSP_CTRL_START | PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) { mode = 0; return; }
-    if (pressed & PSP_CTRL_CROSS) {
-        if (menuSel == 0) {
-            int total = 0;
-            for (int t = 0; t < NITEMS; t++) total += inv[t] * itemSell[t];
-            total = total * 3 / 2;
-            if (total > 0) {
-                money += total;
-                for (int t = 0; t < NITEMS; t++) inv[t] = 0;
-                sprintf(menuMsg, "Vendeu! +$%d", total); play_sfx(3);
-            } else { strcpy(menuMsg, "Nada para vender."); play_sfx(5); }
-        } else if (menuSel == 1) {
-            if (money < 25) { strcpy(menuMsg, "Dinheiro insuficiente!"); play_sfx(5); }
-            else {
-                float r = frand(); int prize;
-                money -= 25;
-                if (r < 0.5f) prize = 0;
-                else if (r < 0.8f) prize = 20;
-                else if (r < 0.93f) prize = 50;
-                else if (r < 0.99f) prize = 100;
-                else prize = 300;
-                if (prize == 0) { strcpy(menuMsg, "Nao foi dessa vez!"); play_sfx(5); }
-                else { money += prize; sprintf(menuMsg, "Premio: $%d!", prize); play_sfx(3); }
-            }
-        } else mode = 0;
+static void death_update(float dt, unsigned int pressed) {
+    deathT += dt;
+    if (deathT > 1.2f && (pressed & PSP_CTRL_CROSS)) {
+        for (int i = 0; i < NITEMS; i++) inv[i] = inv[i] / 2;
+        hp = 60; hunger = hunger < 40 ? 40 : hunger; thirst = thirst < 40 ? 40 : thirst; stam = 100;
+        px = 3.0f; pz = 5.0f; rollT = 0; hurtT = 0; mode = 0; say("Voce renasceu no acampamento.");
+        for (int i = 0; i < NZ; i++) if (zomb[i].active && zomb[i].state == 1 && dist2d(px, pz, zomb[i].x, zomb[i].z) < 20.0f) zomb[i].state = 0;
     }
 }
 
 static void update(float dt, const SceCtrlData *pad, unsigned int pressed) {
     gameTime += dt;
     if (msgTimer > 0) msgTimer -= dt;
+    if (attackCD > 0) attackCD -= dt;
+    if (swingT > 0) swingT -= dt;
+    if (shotT > 0) shotT -= dt;
+    if (hurtT > 0) hurtT -= dt;
+    if (drinkCD > 0) drinkCD -= dt;
 
     if (pad->Buttons & PSP_CTRL_LTRIGGER) cam -= 1.8f * dt;
     if (pad->Buttons & PSP_CTRL_RTRIGGER) cam += 1.8f * dt;
@@ -834,663 +930,65 @@ static void update(float dt, const SceCtrlData *pad, unsigned int pressed) {
     float dx = (pad->Lx - 128) / 128.0f, dy = (pad->Ly - 128) / 128.0f;
     if (fabsf(dx) < 0.2f) dx = 0;
     if (fabsf(dy) < 0.2f) dy = 0;
+    float mx = 0, mz = 0;
     moving = (dx != 0 || dy != 0);
     if (moving) {
-        float fx = sinf(cam), fz = cosf(cam);
-        float rx = -cosf(cam), rz = sinf(cam);
-        float mx = fx * (-dy) + rx * dx, mz = fz * (-dy) + rz * dx;
-        float speed = (boots ? 12.5f : 9.0f) * dt;
-        float ox = px, oz = pz;
-        px += mx * speed; pz += mz * speed;
+        float fx = sinf(cam), fz = cosf(cam), rx = -cosf(cam), rz = sinf(cam);
+        mx = fx * (-dy) + rx * dx; mz = fz * (-dy) + rz * dx;
+        float l = sqrtf(mx * mx + mz * mz); if (l > 1.0f) { mx /= l; mz /= l; }
+    }
+    if ((pressed & PSP_CTRL_CIRCLE) && rollT <= 0 && stam >= 25.0f) {
+        float l = sqrtf(mx * mx + mz * mz);
+        if (l > 0.1f) { rollX = mx / l; rollZ = mz / l; } else { rollX = sinf(pang); rollZ = cosf(pang); }
+        rollT = 0.32f; stam -= 25.0f; play_sfx(8);
+    }
+    if (rollT > 0) { rollT -= dt; mx = rollX * 1.9f; mz = rollZ * 1.9f; }
+    if (mx != 0 || mz != 0) {
+        float sp = 7.5f * dt;
+        px += mx * sp; pz += mz * sp;
         if (px < -WORLD) px = -WORLD;
         if (px > WORLD) px = WORLD;
         if (pz < -WORLD) pz = -WORLD;
         if (pz > WORLD) pz = WORLD;
-        if (in_lake(px, pz)) { px = ox; pz = oz; }
-        float side = mx * rx + mz * rz;
-        if (side > 0.15f) facingRight = 1;
-        else if (side < -0.15f) facingRight = 0;
+        collide(&px, &pz, 0.5f); collide_trees(&px, &pz);
+        pang = atan2f(mx, mz);
+        float rx = -cosf(cam), rz = sinf(cam), side = mx * rx + mz * rz;
+        if (side > 0.15f) facingRight = 1; else if (side < -0.15f) facingRight = 0;
         walkPhase += dt * 8.0f;
     } else walkPhase = 0;
+    stam += 16.0f * dt; if (stam > 100) stam = 100;
 
-    weatherT -= dt;
-    if (weatherT <= 0) {
-        raining = !raining;
-        weatherT = raining ? (15.0f + frand() * 15.0f) : (40.0f + frand() * 40.0f);
-        if (raining) say(season() == 3 ? "Comecou a nevar!" : "Comecou a chover! Plantas crescem 2x.");
-        else say(season() == 3 ? "A neve parou." : "A chuva parou.");
+    hunger -= 0.10f * dt; thirst -= 0.15f * dt;
+    if (hunger < 0) hunger = 0;
+    if (thirst < 0) thirst = 0;
+    if (hunger <= 0 || thirst <= 0) {
+        hp -= 1.5f * dt;
+        if (hp <= 0) { hp = 0; player_die(); return; }
+    } else if (hunger > 40 && thirst > 40 && hp < 100) { hp += 0.5f * dt; if (hp > 100) hp = 100; }
+
+    for (int i = 0; i < nloot; i++) if (loot[i].looted && loot[i].kind != 3) { loot[i].t -= dt; if (loot[i].t <= 0) loot[i].looted = 0; }
+
+    if (rescue == 1) {
+        rescueT -= dt; hordeT -= dt;
+        if (hordeT <= 0) { spawn_horde(2); hordeT = 7.0f; }
+        if (rescueT <= 0) { rescue = 2; rescueT = 90.0f; say("O helicoptero chegou! Va ate ele (X)!"); play_sfx(12); }
+    } else if (rescue == 2) {
+        rescueT -= dt;
+        if (rescueT <= 0) { rescue = 0; say("O helicoptero foi embora... chame de novo."); }
     }
+    zombies_update(dt);
 
-    for (int i = 0; i < NCHICK; i++) animal_wander(&chick[i], PEN_X, PEN_Z, 6.5f, 1.2f, dt);
-    for (int i = 0; i < NCOW; i++) animal_wander(&cow[i], COW_X, COW_Z, 6.5f, 0.8f, dt);
-    for (int i = 0; i < NPIG; i++) animal_wander(&pig[i], COW_X, COW_Z, 6.5f, 1.0f, dt);
-    grow_world(dt, ((raining && season() != 3) ? 2.0f : 1.0f) * (fert ? 1.5f : 1.0f) * season_mult());
-
-    if (fishState == 1) {
-        fishTimer -= dt;
-        if (fishTimer <= 0) { fishState = 2; fishTimer = 1.3f; say("Mordeu! Aperte X!"); play_sfx(1); }
-    } else if (fishState == 2) {
-        fishTimer -= dt;
-        if (fishTimer <= 0) { fishState = 0; say("O peixe escapou..."); }
-    }
-    if (fishState && !near_lake()) fishState = 0;
-
-    /* cachorro: segue o jogador e as vezes acha coisas */
-    {
-        float ddx = px - dogX, ddz = pz - dogZ;
-        float dd = sqrtf(ddx * ddx + ddz * ddz);
-        dogMoving = 0;
-        if (dd > 25.0f) { dogX = px + 2.0f; dogZ = pz + 2.0f; }
-        else if (dd > 3.0f) {
-            float sp = 14.0f * dt;
-            float nx = dogX + ddx / dd * sp, nz = dogZ + ddz / dd * sp;
-            if (!in_lake(nx, nz)) {
-                dogX = nx; dogZ = nz; dogMoving = 1;
-                float rgx = -cosf(cam), rgz = sinf(cam);
-                float sd = (ddx / dd) * rgx + (ddz / dd) * rgz;
-                if (sd > 0.15f) dogFacingRight = 1;
-                else if (sd < -0.15f) dogFacingRight = 0;
-            }
-        }
-        if (dogMoving) dogWalk += dt * 10.0f; else dogWalk = 0;
-        dogTimer -= dt;
-        if (dogTimer <= 0) {
-            if (dd < 8.0f) {
-                float r = frand(); char b[48];
-                dogTimer = 60.0f + frand() * 40.0f;
-                if (r < 0.6f) { int c = 10 + (int)(frand() * 20.0f); money += c; sprintf(b, "Rex achou $%d!", c); }
-                else if (r < 0.85f) { inv[IT_OVO]++; strcpy(b, "Rex achou um ovo!"); }
-                else { inv[IT_FRUTA]++; strcpy(b, "Rex achou uma fruta!"); }
-                say(b); play_sfx(6);
-            } else dogTimer = 5.0f;
-        }
-    }
-    {
-        int dayNow = (int)(gameTime / 150.0f);
-        if (dayNow != lastDay) {
-            lastDay = dayNow;
-            if (festival_active()) { say("Festival na vila hoje! Vendas +50%!"); play_sfx(3); }
-        }
-    }
-
-    if (pressed & PSP_CTRL_LEFT)  { selCrop = (selCrop + NTYPES - 1) % NTYPES; play_sfx(4); }
-    if (pressed & PSP_CTRL_RIGHT) { selCrop = (selCrop + 1) % NTYPES; play_sfx(4); }
+    if (pressed & PSP_CTRL_LEFT)  { selUse = (selUse + 2) % 3; play_sfx(5); }
+    if (pressed & PSP_CTRL_RIGHT) { selUse = (selUse + 1) % 3; play_sfx(5); }
+    if (pressed & PSP_CTRL_UP) use_item();
     if (pressed & PSP_CTRL_SELECT) showHelp = !showHelp;
-    if (pressed & PSP_CTRL_START) { mode = 1; menuSel = 0; menuMsg[0] = 0; return; }
-
-    if (pressed & PSP_CTRL_CROSS) {
-        int i = nearest_plot(), f = nearest_fruit();
-        if (i >= 0) {
-            if (plots[i].stage == 0) {
-                if (seeds[selCrop] > 0) {
-                    seeds[selCrop]--; plots[i].stage = 1; plots[i].t = 0; plots[i].type = selCrop;
-                    say("Plantou!"); play_sfx(1);
-                } else { say("Sem sementes deste tipo!"); play_sfx(5); }
-            } else if (plots[i].stage == 3) {
-                inv[plots[i].type]++; plots[i].stage = 0; say("Colheu!"); play_sfx(2);
-            } else say("Ainda crescendo...");
-        } else if (f >= 0) {
-            if (ftree[f].ripe) { ftree[f].ripe = 0; ftree[f].t = 0; inv[IT_FRUTA] += 2; say("Colheu 2 frutas!"); play_sfx(2); }
-            else say(season() == 3 ? "A arvore dorme no inverno." : "Fruta ainda verde...");
-        } else if (near_lake()) fishing_press();
-        else { say("Nada para fazer aqui."); play_sfx(5); }
-    }
-
-    if (pressed & PSP_CTRL_SQUARE) {
-        if (!at_market()) { say("Va ate o mercado."); play_sfx(5); }
-        else if (money >= cropSeed[selCrop]) {
-            money -= cropSeed[selCrop]; seeds[selCrop]++;
-            say("Comprou 1 semente!"); play_sfx(1);
-        } else { say("Dinheiro insuficiente."); play_sfx(5); }
-    }
-
-    if (pressed & PSP_CTRL_CIRCLE) {
-        if (!at_market()) { say("Va ate o mercado."); play_sfx(5); }
-        else {
-            int total = 0;
-            for (int t = 0; t < NITEMS; t++) total += inv[t] * itemSell[t];
-            if (total > 0) {
-                money += total;
-                for (int t = 0; t < NITEMS; t++) inv[t] = 0;
-                char b[48]; sprintf(b, "Vendeu tudo! +$%d", total); say(b); play_sfx(3);
-            } else { say("Nada para vender."); play_sfx(5); }
-        }
-    }
-
     if (pressed & PSP_CTRL_TRIANGLE) {
-        int v = nearest_npc();
-        if (v >= 0) {
-            if (!deliver(v)) {
-                char b[64]; sprintf(b, "Faltam %d %s!", mis[v].qty - inv[mis[v].item], itemName[mis[v].item]);
-                say(b); play_sfx(5);
-            }
-        } else if (near_hall()) { mode = 4; menuMsg[0] = 0; play_sfx(4); return; }
-        else if (near_fest()) { mode = 6; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
-        else if (near_barn()) { mode = 5; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
-        else if (near_house()) { mode = 3; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
-        else if (near_shop()) { mode = 2; menuSel = 0; menuMsg[0] = 0; play_sfx(4); return; }
-        else if (near_area(PEN_X, PEN_Z)) {
-            if (coopEggs > 0) { inv[IT_OVO] += coopEggs; coopEggs = 0; say("Coletou os ovos!"); play_sfx(2); }
-            else say("Sem ovos por enquanto.");
-        } else if (near_area(COW_X, COW_Z)) {
-            if (penMilk + penMeat > 0) {
-                inv[IT_LEITE] += penMilk; inv[IT_CARNE] += penMeat; penMilk = penMeat = 0;
-                say("Coletou leite e carne!"); play_sfx(2);
-            } else say("Nada para coletar ainda.");
-        } else if (NEAR(dogX, dogZ, 3.5f)) { say("Rex abanou o rabo!"); play_sfx(6); }
-        else say("Va a casa, loja, vila ou aos animais.");
+        for (int k = 1; k <= NW; k++) { int w = (curW + k) % NW; if (hasW[w]) { curW = w; break; } }
+        char m[40]; sprintf(m, "Arma: %s", wName[curW]); say(m); play_sfx(5);
     }
-}
-
-/* ---------- personagens 2D (sprites) ---------- */
-#define SPR_W 12
-#define SPR_H 18
-#define SPR_MAXV 1700
-
-typedef struct { unsigned int color; float x, y, z; } CV;
-#define CV_TYPE (GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D)
-typedef struct { unsigned int hat, band, shirt, pants, boots, skin; int tool; } Pal;
-typedef struct { CV v[SPR_MAXV]; int n; } __attribute__((aligned(16))) Mesh;
-
-static const char *SPR_A[SPR_H] = {
-    "....cccc....",
-    "...cccccc...",
-    ".cccccccccc.",
-    "...dddddd...",
-    "...ssssss.gg",
-    "...sesses.gg",
-    "...ssmmss.t.",
-    "....ssss..t.",
-    "..aaaaaaaat.",
-    ".aaaaaaaaas.",
-    ".aaaaaaaaat.",
-    ".saaaaaaaat.",
-    "..aaaaaaaat.",
-    "..bbbbbbbbt.",
-    "..bbb..bbbt.",
-    "..bbb..bbbt.",
-    "..kkk..kkk..",
-    "..kkk..kkk.."
-};
-static const char *SPR_B[4] = {
-    "..bbbbbbbbt.",
-    "...bb..bb.t.",
-    "...kk..kk...",
-    "...kkk.kkk.."
-};
-
-static Mesh __attribute__((aligned(16))) meshPlayer[2][2];   /* [passo][0=direita,1=esquerda] */
-static Mesh __attribute__((aligned(16))) meshNpc[NNPC];
-static Mesh __attribute__((aligned(16))) meshDog[2][2];
-
-static unsigned int pal_color(char ch, const Pal *p) {
-    switch (ch) {
-    case 'c': return p->hat;   case 'd': return p->band;
-    case 'a': return p->shirt; case 'b': return p->pants;
-    case 'k': return p->boots; case 's': return p->skin;
-    case 'e': return 0xff202020; case 'm': return 0xff3030a0;
-    case 't': return p->tool ? 0xff3a6a9a : 0;
-    case 'g': return p->tool ? 0xffc0c0c0 : 0;
-    default: return 0;
-    }
-}
-
-static char spr_px(int r, int c, int frameB) {
-    if (r < 0 || r >= SPR_H || c < 0 || c >= SPR_W) return '.';
-    if (frameB && r >= 14) return SPR_B[r - 14][c];
-    return SPR_A[r][c];
-}
-
-static void add_quad(Mesh *m, float x0, float yb, float x1, float yt, unsigned int col) {
-    if (m->n + 6 > SPR_MAXV) return;
-    CV *v = &m->v[m->n];
-    float xs[6] = { x0, x1, x1, x0, x1, x0 };
-    float ys[6] = { yb, yb, yt, yb, yt, yt };
-    for (int k = 0; k < 6; k++) { v[k].color = col; v[k].x = xs[k]; v[k].y = ys[k]; v[k].z = 0; }
-    m->n += 6;
-}
-
-static void build_mesh(Mesh *m, const Pal *p, int frameB, int flip) {
-    const float ps = 0.12f;
-    float sg = flip ? 1.0f : -1.0f;
-    m->n = 0;
-    for (int r = -1; r <= SPR_H; r++) {
-        for (int c = -1; c <= SPR_W; c++) {
-            unsigned int col = pal_color(spr_px(r, c, frameB), p);
-            if (!col) {
-                if (pal_color(spr_px(r - 1, c, frameB), p) || pal_color(spr_px(r + 1, c, frameB), p) ||
-                    pal_color(spr_px(r, c - 1, frameB), p) || pal_color(spr_px(r, c + 1, frameB), p))
-                    col = 0xff101830;
-                else continue;
-            }
-            add_quad(m, sg * (c - 6) * ps, (SPR_H - r - 1) * ps, sg * (c + 1 - 6) * ps, (SPR_H - r) * ps, col);
-        }
-    }
-}
-
-static const Pal PAL_PLAYER = { 0xff40d0f0, 0xff2020c0, 0xff2828d8, 0xffd04020, 0xff203050, 0xff90b8f0, 1 };
-
-static const char *DOG_A[8] = {
-    ".........pp.",
-    "oo......oooo",
-    ".o.ooooooeoo",
-    "..ooooooooon",
-    "..owwwwwoot.",
-    "..oo....oo..",
-    "..oo....oo..",
-    "..pp....pp.."
-};
-static const char *DOG_B[3] = {
-    "...oo..oo...",
-    "...oo..oo...",
-    "...pp..pp..."
-};
-
-static unsigned int dog_color(char ch) {
-    switch (ch) {
-    case 'o': return 0xff3a8ae0; case 'p': return 0xff1f4a90;
-    case 'w': return 0xffc8e0f8; case 'n': return 0xff202020;
-    case 'e': return 0xff101010; case 't': return 0xff8080f0;
-    default: return 0;
-    }
-}
-
-static char dog_px(int r, int c, int frameB) {
-    if (r < 0 || r >= 8 || c < 0 || c >= 12) return '.';
-    if (frameB && r >= 5) return DOG_B[r - 5][c];
-    return DOG_A[r][c];
-}
-
-static void build_dog(Mesh *m, int frameB, int flip) {
-    const float ps = 0.13f;
-    float sg = flip ? 1.0f : -1.0f;
-    m->n = 0;
-    for (int r = -1; r <= 8; r++) {
-        for (int c = -1; c <= 12; c++) {
-            unsigned int col = dog_color(dog_px(r, c, frameB));
-            if (!col) {
-                if (dog_color(dog_px(r - 1, c, frameB)) || dog_color(dog_px(r + 1, c, frameB)) ||
-                    dog_color(dog_px(r, c - 1, frameB)) || dog_color(dog_px(r, c + 1, frameB)))
-                    col = 0xff101830;
-                else continue;
-            }
-            add_quad(m, sg * (c - 6) * ps, (8 - r - 1) * ps, sg * (c + 1 - 6) * ps, (8 - r) * ps, col);
-        }
-    }
-}
-
-static void build_sprites(void) {
-    Pal pl = PAL_PLAYER;
-    Pal np[NNPC] = {
-        { 0xff3070e0, 0xff2050a0, 0xffc050e0, 0xff80402a, 0xff101830, 0xffa0c0f8, 0 },
-        { 0xff404040, 0xff606060, 0xff30a030, 0xff506080, 0xff202020, 0xff80a8e0, 0 },
-        { 0xffe0e0e0, 0xffd09050, 0xfff0a030, 0xff404080, 0xff202020, 0xffa0c0f8, 0 },
-        { 0xff2080c0, 0xff104060, 0xff30b0e0, 0xff503020, 0xff202020, 0xff70a0d8, 1 },
-        { 0xff204080, 0xff3060c0, 0xff50c0f0, 0xff804020, 0xff101830, 0xffa0c8f8, 0 },
-        { 0xffc8c8c8, 0xff808080, 0xff40a0a0, 0xff304050, 0xff202020, 0xff80a0d0, 1 }
-    };
-    for (int f = 0; f < 2; f++) for (int fl = 0; fl < 2; fl++) build_mesh(&meshPlayer[f][fl], &pl, f, fl);
-    for (int i = 0; i < NNPC; i++) build_mesh(&meshNpc[i], &np[i], 0, 0);
-    for (int f = 0; f < 2; f++) for (int fl = 0; fl < 2; fl++) build_dog(&meshDog[f][fl], f, fl);
-    sceKernelDcacheWritebackAll();
-}
-
-static void draw_sprite(const Mesh *m, float x, float z) {
-    ScePspFVector3 p = { x, 0.0f, z };
-    sceGumMatrixMode(GU_MODEL);
-    sceGumLoadIdentity();
-    sceGumTranslate(&p);
-    sceGumRotateY(cam);
-    sceGumUpdateMatrix();
-    sceGumDrawArray(GU_TRIANGLES, CV_TYPE, m->n, 0, m->v);
-}
-
-/* ---------- desenho do mundo ---------- */
-static void fence_line(float x1, float z1, float x2, float z2) {
-    float dx = x2 - x1, dz = z2 - z1;
-    float len = sqrtf(dx * dx + dz * dz);
-    float mx = (x1 + x2) * 0.5f, mz = (z1 + z2) * 0.5f;
-    if (dist2d(px, pz, mx, mz) > len * 0.5f + 45.0f) return;
-    float ang = atan2f(dx, dz);
-    int n = (int)(len / 6.0f);
-    if (n < 1) n = 1;
-    box(mx, 0.35f, mz, 0.12f, 0.12f, len, ang, 0xff3a6a9a);
-    box(mx, 0.75f, mz, 0.12f, 0.12f, len, ang, 0xff3a6a9a);
-    for (int i = 0; i <= n; i++)
-        box(x1 + dx * i / n, 0, z1 + dz * i / n, 0.25f, 1.0f, 0.25f, 0, 0xff2a4a70);
-}
-
-static void fence_rect(float cx, float cz, float half) {
-    fence_line(cx - half, cz - half, cx + half, cz - half);
-    fence_line(cx + half, cz - half, cx + half, cz + half);
-    fence_line(cx + half, cz + half, cx - half, cz + half);
-    fence_line(cx - half, cz + half, cx - half, cz - half);
-}
-
-static void draw_crop(const Plot *p) {
-    float x = p->x, z = p->z;
-    if (p->stage == 0) return;
-    if (p->stage == 1) { box(x, 0.2f, z, 0.4f, 0.4f, 0.4f, 0, 0xff30c030); return; }
-    int ripe = (p->stage == 3);
-    switch (p->type) {
-    case 0:
-        if (!ripe) box(x, 0.2f, z, 0.8f, 1.0f, 0.8f, 0, 0xff20b040);
-        else {
-            box(x, 0.2f, z, 1.0f, 1.2f, 1.0f, 0, 0xff20a030);
-            box(x, 1.2f, z, 0.9f, 0.7f, 0.9f, 0, 0xff1e50e8);
-        }
-        break;
-    case 1:
-        for (int k = 0; k < 4; k++) {
-            float ox = (k % 2) ? 0.6f : -0.6f, oz = (k / 2) ? 0.6f : -0.6f;
-            if (!ripe) box(x + ox, 0.2f, z + oz, 0.25f, 1.2f, 0.25f, 0, 0xff40c070);
-            else       box(x + ox, 0.2f, z + oz, 0.25f, 1.6f, 0.25f, 0, 0xff30b0e0);
-        }
-        break;
-    case 2:
-        if (!ripe) box(x, 0.2f, z, 0.5f, 1.8f, 0.5f, 0, 0xff30a030);
-        else {
-            box(x, 0.2f, z, 0.5f, 2.4f, 0.5f, 0, 0xff30a030);
-            box(x + 0.35f, 1.2f, z, 0.3f, 0.9f, 0.3f, 0, 0xff30e0ff);
-        }
-        break;
-    default:
-        box(x, 0.2f, z, 0.8f, ripe ? 0.7f : 0.6f, 0.8f, 0, 0xff30b040);
-        if (ripe) box(x, 0.15f, z, 0.45f, 0.35f, 0.45f, 0, 0xff2080ff);
-        break;
-    }
-}
-
-static void leg(const Animal *a, float lx, float lz, float w, float h, unsigned int col) {
-    float c = cosf(a->ang), s = sinf(a->ang);
-    box(a->x + lx * c + lz * s, 0, a->z - lx * s + lz * c, w, h, w, a->ang, col);
-}
-
-static void draw_cow(const Animal *a) {
-    box(a->x, 0.5f, a->z, 1.1f, 0.9f, 1.8f, a->ang, 0xfff0f0f0);
-    box(a->x, 1.38f, a->z, 0.6f, 0.1f, 0.8f, a->ang, 0xff202020);
-    box(a->x + sinf(a->ang) * 1.1f, 0.9f, a->z + cosf(a->ang) * 1.1f, 0.6f, 0.6f, 0.6f, a->ang, 0xff6080a0);
-    leg(a, -0.35f, -0.6f, 0.2f, 0.5f, 0xff303030); leg(a, 0.35f, -0.6f, 0.2f, 0.5f, 0xff303030);
-    leg(a, -0.35f, 0.6f, 0.2f, 0.5f, 0xff303030);  leg(a, 0.35f, 0.6f, 0.2f, 0.5f, 0xff303030);
-}
-
-static void draw_pig(const Animal *a) {
-    box(a->x, 0.3f, a->z, 0.9f, 0.6f, 1.3f, a->ang, 0xffb0a0ff);
-    box(a->x + sinf(a->ang) * 0.8f, 0.35f, a->z + cosf(a->ang) * 0.8f, 0.6f, 0.5f, 0.5f, a->ang, 0xffb0a0ff);
-    box(a->x + sinf(a->ang) * 1.1f, 0.4f, a->z + cosf(a->ang) * 1.1f, 0.3f, 0.25f, 0.15f, a->ang, 0xff8080e0);
-    leg(a, -0.3f, -0.4f, 0.18f, 0.3f, 0xff8080e0); leg(a, 0.3f, -0.4f, 0.18f, 0.3f, 0xff8080e0);
-    leg(a, -0.3f, 0.4f, 0.18f, 0.3f, 0xff8080e0);  leg(a, 0.3f, 0.4f, 0.18f, 0.3f, 0xff8080e0);
-}
-
-static unsigned int foliage(int i) {
-    static const unsigned int aut[3] = { 0xff2080e0, 0xff30b0f0, 0xff2040c0 };
-    switch (season()) {
-    case 0: return (i % 3 == 0) ? 0xffa0c8ff : 0xff40b858;
-    case 1: return 0xff208030;
-    case 2: return aut[i % 3];
-    default: return 0xfff4f4f4;
-    }
-}
-
-static void draw_fruit_tree(const FruitTree *t, int idx) {
-    unsigned int leaf = (season() == 0) ? 0xffc0a0ff : foliage(idx);
-    unsigned int fruit = (idx % 2) ? 0xff2080ff : 0xff2020e0;
-    box(t->x, 0, t->z, 0.7f, 2.2f, 0.7f, 0, 0xff204060);
-    box(t->x, 1.8f, t->z, 3.0f, 2.4f, 3.0f, 0, leaf);
-    if (t->ripe) {
-        box(t->x + 1.55f, 2.4f, t->z, 0.5f, 0.5f, 0.5f, 0, fruit);
-        box(t->x - 1.55f, 2.8f, t->z, 0.5f, 0.5f, 0.5f, 0, fruit);
-        box(t->x, 2.6f, t->z + 1.55f, 0.5f, 0.5f, 0.5f, 0, fruit);
-        box(t->x, 2.2f, t->z - 1.55f, 0.5f, 0.5f, 0.5f, 0, fruit);
-    }
-}
-
-static void small_house(float x, float z, unsigned int wall, unsigned int roof) {
-    box(x, 0, z, 5.0f, 3.0f, 5.0f, 0, wall);
-    box(x, 3.0f, z, 5.6f, 1.0f, 5.6f, 0, roof);
-    box(x, 0, z + 2.55f, 1.0f, 2.0f, 0.12f, 0, 0xff203050);
-    box(x + 1.6f, 1.2f, z + 2.55f, 0.8f, 0.8f, 0.1f, 0, 0xfff0e0a0);
-}
-
-static void draw_player_house(void) {
-    float x = HOUSE_X, z = HOUSE_Z;
-    box(x, 0, z, 6.0f, 3.5f, 6.0f, 0, 0xffa8c8e8);
-    if (houseLvl >= 2) box(x, 3.5f, z, 5.4f, 2.8f, 5.4f, 0, 0xffb8d8f0);
-    float ry = (houseLvl >= 2) ? 6.3f : 3.5f;
-    box(x, ry, z, 6.8f, 1.2f, 6.8f, 0, 0xff204080);
-    box(x, 0, z + 3.05f, 1.2f, 2.2f, 0.15f, 0, 0xff203050);
-    box(x - 2.0f, 1.2f, z + 3.05f, 1.0f, 1.0f, 0.12f, 0, 0xfff0e0a0);
-    box(x + 2.0f, 1.2f, z + 3.05f, 1.0f, 1.0f, 0.12f, 0, 0xfff0e0a0);
-    if (houseLvl >= 2) {
-        box(x, 4.3f, z + 2.75f, 1.0f, 1.0f, 0.12f, 0, 0xfff0e0a0);
-        box(x + 2.0f, ry + 0.8f, z - 1.5f, 0.8f, 2.0f, 0.8f, 0, 0xff303060);
-    }
-    if (houseLvl >= 3) {
-        box(x + 6.0f, 0, z, 4.0f, 3.0f, 5.0f, 0, 0xffd0e0f0);
-        box(x + 6.0f, 3.0f, z, 4.6f, 1.0f, 5.6f, 0, 0xff204080);
-        box(x, 0, z + 4.4f, 5.0f, 0.2f, 2.4f, 0, 0xff3a6a9a);
-        box(x - 2.2f, 0, z + 5.4f, 0.3f, 2.4f, 0.3f, 0, 0xffe0e0e0);
-        box(x + 2.2f, 0, z + 5.4f, 0.3f, 2.4f, 0.3f, 0, 0xffe0e0e0);
-        box(x, 2.4f, z + 4.6f, 5.4f, 0.2f, 2.8f, 0, 0xff204080);
-        for (int i = 0; i < 5; i++)
-            box(x - 2.6f + i * 1.3f, 0, z + 6.4f, 0.4f, 0.5f, 0.4f, 0, (i % 2) ? 0xff30e0ff : 0xff2020e0);
-    }
-}
-
-static void draw_hall(void) {
-    box(HALL_X, 0, HALL_Z, 12.0f, 5.0f, 6.0f, 0, 0xffe0e0e8);
-    box(HALL_X, 5.0f, HALL_Z, 12.8f, 1.2f, 6.8f, 0, 0xff303050);
-    box(HALL_X, 6.2f, HALL_Z, 2.2f, 3.5f, 2.2f, 0, 0xffd0d0d8);
-    box(HALL_X, 9.7f, HALL_Z, 0.15f, 3.0f, 0.15f, 0, 0xff202020);
-    box(HALL_X + 0.7f, 11.4f, HALL_Z, 1.2f, 0.8f, 0.1f, 0, 0xff2020d0);
-    for (int i = 0; i < 4; i++) box(HALL_X - 4.0f + i * 2.7f, 0, HALL_Z + 3.3f, 0.5f, 4.0f, 0.5f, 0, 0xfff0f0f0);
-    box(HALL_X, 0, HALL_Z + 3.05f, 2.0f, 3.0f, 0.15f, 0, 0xff204070);
-    box(HALL_X, 4.0f, HALL_Z + 3.1f, 5.0f, 0.8f, 0.1f, 0, 0xff30e0ff);
-}
-
-static void draw_festival(void) {
-    static const unsigned int fc[5] = { 0xff2020d0, 0xff30e0ff, 0xff30c030, 0xffe08030, 0xffd040d0 };
-    for (int i = 0; i < 8; i++) {
-        float z = -30.0f - i * 3.5f;
-        box(-3.2f, 0, z, 0.15f, 3.4f, 0.15f, 0, 0xff3a6a9a);
-        box(3.2f, 0, z, 0.15f, 3.4f, 0.15f, 0, 0xff3a6a9a);
-        box(-3.2f, 3.0f, z, 0.1f, 0.6f, 0.9f, 0, fc[i % 5]);
-        box(3.2f, 3.0f, z, 0.1f, 0.6f, 0.9f, 0, fc[(i + 2) % 5]);
-    }
-    box(FEST_X, 0, FEST_Z, 4.0f, 1.0f, 1.6f, 0, 0xff3a6a9a);
-    for (int i = 0; i < 4; i++)
-        box(FEST_X - 1.5f + i * 1.0f, 2.8f, FEST_Z, 1.0f, 0.3f, 2.6f, 0, (i % 2) ? 0xfff0f0f0 : 0xff2020d0);
-    box(FEST_X - 1.9f, 0, FEST_Z + 1.2f, 0.2f, 2.8f, 0.2f, 0, 0xffe0e0e0);
-    box(FEST_X + 1.9f, 0, FEST_Z + 1.2f, 0.2f, 2.8f, 0.2f, 0, 0xffe0e0e0);
-    box(FEST_X, 3.3f, FEST_Z + 1.2f, 3.0f, 0.8f, 0.1f, 0, 0xff30e0ff);
-    float dayv = 0.5f + 0.5f * cosf(gameTime * 2.0f * PI_F / 150.0f);
-    if (dayv < 0.6f) {
-        for (int k = 0; k < 3; k++) {
-            float t = fmodf(gameTime * 0.5f + k * 0.7f, 2.0f) / 2.0f;
-            float cx = -8.0f + k * 8.0f, cy = 15.0f;
-            unsigned int c = fc[(k + (int)(gameTime * 0.5f)) % 5];
-            for (int i = 0; i < 12; i++) {
-                float a = i * (PI_F / 6.0f);
-                box(cx + cosf(a) * t * 6.0f, cy + sinf(a) * t * 6.0f - t * t * 4.0f, -46.0f, 0.3f, 0.3f, 0.3f, 0, c);
-            }
-        }
-    }
-}
-
-static void draw_scene(void) {
-    static const unsigned int g1[4] = { 0xff50b050, 0xff3c9a3c, 0xff3a8ac0, 0xfff0f0f0 };
-    static const unsigned int g2[4] = { 0xff48a848, 0xff328a34, 0xff3078b0, 0xffe0e4e8 };
-    static const float skyR[4] = { 110, 90, 190, 170 }, skyG[4] = { 190, 170, 160, 190 }, skyB[4] = { 235, 245, 130, 205 };
-    int sn = season();
-    groundC1 = g1[sn]; groundC2 = g2[sn];
-
-    float day = 0.5f + 0.5f * cosf(gameTime * 2.0f * PI_F / 150.0f); /* 1=dia */
-    float b = 0.25f + 0.75f * day;
-    if (raining) b *= 0.75f;
-
-    unsigned int sky = 0xff000000
-        | ((unsigned int)(skyB[sn] * b) << 16) | ((unsigned int)(skyG[sn] * b) << 8) | (unsigned int)(skyR[sn] * b);
-    sceGuClearColor(sky);
-    sceGuClearDepth(0);
-    sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT | GU_FAST_CLEAR_BIT);
-
-    sceGumMatrixMode(GU_PROJECTION);
-    sceGumLoadIdentity();
-    sceGumPerspective(70.0f, 16.0f / 9.0f, 1.0f, 200.0f);
-
-    sceGumMatrixMode(GU_VIEW);
-    sceGumLoadIdentity();
-    ScePspFVector3 eye = { px - sinf(cam) * 11.0f, 7.0f, pz - cosf(cam) * 11.0f };
-    ScePspFVector3 ctr = { px, 1.5f, pz };
-    ScePspFVector3 up  = { 0, 1, 0 };
-    sceGumLookAt(&eye, &ctr, &up);
-
-    sceGuEnable(GU_LIGHTING);
-    sceGuEnable(GU_LIGHT0);
-    ScePspFVector3 dir = { 0.4f, 1.0f, 0.3f };
-    sceGuLight(0, GU_DIRECTIONAL, GU_DIFFUSE, &dir);
-    unsigned int lc = 0xff000000 | ((unsigned int)(165*b) << 16) | ((unsigned int)(165*b) << 8) | (unsigned int)(165*b);
-    sceGuLightColor(0, GU_DIFFUSE, lc);
-    sceGuAmbient(0xff000000 | ((unsigned int)(105*b) << 16) | ((unsigned int)(105*b) << 8) | (unsigned int)(105*b));
-    sceGuColorMaterial(GU_AMBIENT | GU_DIFFUSE);
-
-    draw_ground();
-    box(0, 0.04f, -28.0f, 3.0f, 0.08f, 56.0f, 0, 0xff6f8fa8);
-
-    /* canteiros e cercas */
-    if (NEAR(16, 0, 45)) {
-        for (int i = 0; i < nplots(); i++) {
-            box(plots[i].x, 0.06f, plots[i].z, 3.0f, 0.12f, 3.0f, 0, 0xff2a4a6b);
-            draw_crop(&plots[i]);
-        }
-    }
-    fence_line(5, -8, 23, -8);
-    fence_line(23, -8, 23, 8);
-    fence_line(23, 8, 5, 8);
-    fence_line(5, 8, 5, -8);
-    if (landUp) {
-        fence_line(5, 10, 23, 10);
-        fence_line(23, 10, 23, 24);
-        fence_line(23, 24, 5, 24);
-        fence_line(5, 24, 5, 10);
-    }
-
-    /* celeiro, casa do jogador */
-    if (NEAR(BARN_X, BARN_Z, 70)) {
-        box(BARN_X, 0, BARN_Z, 8, 4.5f, 6, 0, 0xff2828b0);
-        box(BARN_X, 4.5f, BARN_Z, 8.4f, 1.5f, 6.4f, 0, 0xff303030);
-        box(BARN_X, 0, BARN_Z + 3.05f, 3.2f, 3.4f, 0.15f, 0, 0xffe0e8f0);
-        box(BARN_X, 0, BARN_Z + 3.12f, 0.2f, 3.4f, 0.1f, 0, 0xff2828b0);
-        box(BARN_X, 4.8f, BARN_Z + 3.15f, 3.6f, 0.9f, 0.1f, 0, 0xff30e0ff);
-        box(BARN_X + 5.2f, 0, BARN_Z + 2.0f, 1.4f, 1.0f, 1.4f, 0, 0xff30c0e0);
-        box(BARN_X - 5.2f, 0, BARN_Z + 2.4f, 1.4f, 1.0f, 1.4f, 0, 0xff30c0e0);
-        box(BARN_X + 6.5f, 0, BARN_Z - 1.5f, 2.2f, 7.0f, 2.2f, 0, 0xffc8c8c8);
-        box(BARN_X + 6.5f, 7.0f, BARN_Z - 1.5f, 2.5f, 0.8f, 2.5f, 0, 0xff303030);
-    }
-    if (NEAR(HOUSE_X, HOUSE_Z, 70)) draw_player_house();
-
-    /* mercado e loja */
-    if (NEAR(MKT_X, MKT_Z, 70)) {
-        box(MKT_X - 2, 0, MKT_Z, 0.4f, 3, 0.4f, 0, 0xff204060);
-        box(MKT_X + 2, 0, MKT_Z, 0.4f, 3, 0.4f, 0, 0xff204060);
-        box(MKT_X, 1.0f, MKT_Z, 4.4f, 0.8f, 1.5f, 0, 0xff3090d0);
-        box(MKT_X, 3.0f, MKT_Z, 5.5f, 0.3f, 3.0f, 0, 0xff2020d0);
-        box(SHOP_X, 0, SHOP_Z, 6.0f, 3.2f, 4.0f, 0, 0xffc06020);
-        box(SHOP_X, 3.2f, SHOP_Z, 6.6f, 0.6f, 4.6f, 0, 0xff2020a0);
-        box(SHOP_X, 3.8f, SHOP_Z + 2.0f, 3.0f, 1.0f, 0.2f, 0, 0xff30e0ff);
-        box(SHOP_X, 0, SHOP_Z + 2.05f, 1.2f, 2.0f, 0.15f, 0, 0xff203050);
-    }
-
-    /* lago */
-    if (NEAR(LAKE_X, LAKE_Z, 70)) {
-        box(LAKE_X, 0.02f, LAKE_Z, LAKE_HX * 2.0f, 0.1f, LAKE_HZ * 2.0f, 0, (sn == 3) ? 0xfff0e0c8 : 0xffc07030);
-        box(LAKE_X + LAKE_HX, 0.1f, LAKE_Z, 3.0f, 0.25f, 1.2f, 0, 0xff3a6a9a);
-    }
-
-    /* pomar */
-    if (NEAR(ORCH_X, ORCH_Z, 70)) {
-        fence_rect(ORCH_X, ORCH_Z, 9.0f);
-        for (int i = 0; i < NFRUIT; i++) draw_fruit_tree(&ftree[i], i);
-    }
-
-    /* vila */
-    if (NEAR(0, -48, 75)) {
-        small_house(-12.0f, -34.0f, 0xffc8d8f0, 0xff2040a0);
-        small_house(12.0f, -42.0f, 0xffb0e0c0, 0xff204080);
-        small_house(-12.0f, -50.0f, 0xfff0d0b0, 0xff303090);
-        small_house(12.0f, -34.0f, 0xffd0c0f0, 0xff2060a0);
-        small_house(-12.0f, -42.0f, 0xffa0e0f0, 0xff802030);
-        small_house(12.0f, -50.0f, 0xffe0e0b0, 0xff305080);
-        draw_hall();
-        if (festival_active()) draw_festival();
-    }
-
-    /* galinheiro */
-    if (NEAR(PEN_X, PEN_Z, 70)) {
-        fence_rect(PEN_X, PEN_Z, 8.0f);
-        box(PEN_X - 5, 0, PEN_Z - 5, 3.0f, 2.0f, 3.0f, 0, 0xff4070c0);
-        box(PEN_X - 5, 2.0f, PEN_Z - 5, 3.4f, 0.8f, 3.4f, 0, 0xff202080);
-        for (int i = 0; i < NCHICK; i++) {
-            Animal *c = &chick[i];
-            box(c->x, 0.15f, c->z, 0.5f, 0.4f, 0.7f, c->ang, 0xfff0f0f0);
-            box(c->x + sinf(c->ang) * 0.4f, 0.45f, c->z + cosf(c->ang) * 0.4f,
-                0.25f, 0.3f, 0.25f, c->ang, 0xff2020e0);
-        }
-        for (int i = 0; i < coopEggs && i < 24; i++)
-            box(PEN_X + 3.0f + (i % 6) * 0.5f, 0.05f, PEN_Z + 6.0f - (i / 6) * 0.5f,
-                0.25f, 0.3f, 0.25f, 0, 0xffd0f0ff);
-    }
-
-    /* curral */
-    if (NEAR(COW_X, COW_Z, 70)) {
-        fence_rect(COW_X, COW_Z, 8.0f);
-        box(COW_X - 5, 0, COW_Z - 5, 4.0f, 2.5f, 3.0f, 0, 0xff2a3a90);
-        box(COW_X - 5, 2.5f, COW_Z - 5, 4.4f, 0.8f, 3.4f, 0, 0xff202020);
-        for (int i = 0; i < NCOW; i++) draw_cow(&cow[i]);
-        for (int i = 0; i < NPIG; i++) draw_pig(&pig[i]);
-        for (int i = 0; i < penMilk && i < 12; i++)
-            box(COW_X + 2.0f + (i % 6) * 0.5f, 0.05f, COW_Z + 6.5f - (i / 6) * 0.5f,
-                0.3f, 0.5f, 0.3f, 0, 0xfff8f8f8);
-        for (int i = 0; i < penMeat && i < 12; i++)
-            box(COW_X - 3.0f + (i % 6) * 0.5f, 0.05f, COW_Z + 6.5f - (i / 6) * 0.5f,
-                0.35f, 0.25f, 0.35f, 0, 0xff4040d0);
-    }
-
-    /* arvores */
-    for (int i = 0; i < NTREES; i++) {
-        float tdx = treeX[i] - px, tdz = treeZ[i] - pz;
-        if (tdx * tdx + tdz * tdz > 58.0f * 58.0f) continue;
-        box(treeX[i], 0, treeZ[i], 0.8f, treeH[i], 0.8f, 0, 0xff204060);
-        box(treeX[i], treeH[i] - 0.5f, treeZ[i], 3.2f, 2.8f, 3.2f, 0.4f * i, foliage(i));
-    }
-
-    /* chuva ou neve */
-    if (raining) {
-        for (int i = 0; i < NDROPS; i++) {
-            float ox = ((i * 37) % 31) - 15.0f;
-            float oz = ((i * 53) % 29) - 14.0f;
-            if (sn == 3) {
-                float y = 12.0f - fmodf((i * 1.3f) + gameTime * 3.5f, 12.0f);
-                box(px + ox + sinf(gameTime + i) * 0.6f, y, pz + oz, 0.14f, 0.14f, 0.14f, 0, 0xffffffff);
-            } else {
-                float y = 14.0f - fmodf((i * 1.7f) + gameTime * 18.0f, 14.0f);
-                box(px + ox, y, pz + oz, 0.05f, 0.7f, 0.05f, 0, 0xffffc8a0);
-            }
-        }
-    }
-
-    /* sombras */
-    box(px, 0.1f, pz, 1.0f, 0.02f, 0.6f, 0, 0xff000000);
-    box(dogX, 0.1f, dogZ, 0.9f, 0.02f, 0.5f, 0, 0xff000000);
-    for (int i = 0; i < NNPC; i++)
-        if (NEAR(npcX[i], npcZ[i], 80)) box(npcX[i], 0.1f, npcZ[i], 1.0f, 0.02f, 0.6f, 0, 0xff000000);
-
-    /* personagens 2D (sprites, sem luz) */
-    sceGuDisable(GU_LIGHTING);
-    for (int i = 0; i < NNPC; i++)
-        if (NEAR(npcX[i], npcZ[i], 80)) draw_sprite(&meshNpc[i], npcX[i], npcZ[i]);
-    draw_sprite(&meshDog[dogMoving ? (((int)dogWalk) & 1) : 0][dogFacingRight ? 0 : 1], dogX, dogZ);
-    draw_sprite(&meshPlayer[moving ? (((int)walkPhase) & 1) : 0][facingRight ? 0 : 1], px, pz);
+    if ((pressed & PSP_CTRL_SQUARE) || ((pad->Buttons & PSP_CTRL_SQUARE) && wAuto[curW])) player_attack();
+    if (pressed & PSP_CTRL_CROSS) interact();
+    if (pressed & PSP_CTRL_START) { mode = 1; menuSel = 0; menuMsg[0] = 0; }
 }
 
 static const unsigned char font5x7[95][5] = {
@@ -1640,9 +1138,348 @@ static void ui_shadow(int x, int y, int sc, unsigned int color, const char *s) {
     ui_text(x, y, sc, color, s);
 }
 
+/* ---------- personagens e armas em 3D ---------- */
+typedef struct { float ox, oy, oz, sx, sy, sz; unsigned int col; } WPart;
+static const WPart WPARTS[NW][4] = {
+    { { 0, 0, 0, 0, 0, 0, 0 } },
+    { { 0, -0.04f, 0.5f, 0.09f, 0.09f, 1.0f, 0xff3a6a9a }, { 0, -0.07f, 0.95f, 0.14f, 0.14f, 0.3f, 0xff3a6a9a } },
+    { { 0, -0.035f, 0.5f, 0.07f, 0.07f, 1.0f, 0xff3a6a9a }, { 0, -0.17f, 0.92f, 0.05f, 0.34f, 0.24f, 0xffa0a8a8 } },
+    { { 0, -0.06f, 0.55f, 0.03f, 0.12f, 0.9f, 0xffd0d8d8 }, { 0, -0.04f, 0.05f, 0.05f, 0.08f, 0.22f, 0xff202830 } },
+    { { 0, -0.05f, 0.25f, 0.10f, 0.14f, 0.45f, 0xff484848 }, { 0, -0.2f, 0.08f, 0.09f, 0.2f, 0.12f, 0xff202020 } },
+    { { 0, -0.07f, 0.3f, 0.12f, 0.16f, 0.7f, 0xff404040 }, { 0, -0.3f, 0.25f, 0.08f, 0.24f, 0.1f, 0xff202020 },
+      { 0, -0.05f, -0.2f, 0.08f, 0.1f, 0.3f, 0xff303030 } },
+    { { 0, -0.04f, 0.6f, 0.09f, 0.09f, 1.2f, 0xff606870 }, { 0, -0.12f, -0.2f, 0.11f, 0.18f, 0.55f, 0xff3a6a9a },
+      { 0, -0.1f, 0.55f, 0.13f, 0.12f, 0.3f, 0xff2a4a6a } },
+    { { 0, -0.03f, 0.7f, 0.07f, 0.07f, 1.3f, 0xff505860 }, { 0, -0.09f, 0.05f, 0.11f, 0.16f, 0.65f, 0xff2a4a6a },
+      { 0, 0.06f, 0.35f, 0.06f, 0.06f, 0.3f, 0xff101010 }, { 0, -0.1f, -0.35f, 0.1f, 0.2f, 0.4f, 0xff2a4a6a } }
+};
+static const int WPN[NW] = { 0, 2, 2, 2, 2, 3, 3, 4 };
+
+/* arma presa na mao: pivo no ombro, gira com o braco; com pitch=-90 graus o eixo z da arma aponta para frente */
+static void weapon_part(float x, float y, float z, float yaw, float pitch, float armLen, const WPart *p) {
+    ScePspFVector3 t1 = { x, y, z }, t2 = { 0, -armLen, 0 }, t3 = { p->ox, p->oy, p->oz }, s = { p->sx, p->sy, p->sz };
+    sceGumMatrixMode(GU_MODEL);
+    sceGumLoadIdentity();
+    sceGumTranslate(&t1); sceGumRotateY(yaw); sceGumRotateX(pitch); sceGumTranslate(&t2);
+    sceGumRotateX(1.5708f); sceGumTranslate(&t3); sceGumScale(&s);
+    sceGumUpdateMatrix();
+    sceGuColor(p->col);
+    sceGumDrawArray(GU_TRIANGLES, VTX_TYPE, 36, 0, cube);
+}
+static void draw_weapon(int w, float x, float y, float z, float yaw, float pitch, float armLen) {
+    for (int k = 0; k < WPN[w]; k++) weapon_part(x, y, z, yaw, pitch, armLen, &WPARTS[w][k]);
+}
+
+/* parte do corpo: origem no chao, gira com o personagem; hang=1 faz o bloco pender do pivo (bracos e pernas) */
+static void body_part(float x, float z, float yaw, float ox, float oy, float oz, float pitch, int hang,
+                      float sx, float sy, float sz, unsigned int col) {
+    ScePspFVector3 t1 = { x, 0, z }, t2 = { ox, oy, oz }, t3 = { 0, -sy, 0 }, s = { sx, sy, sz };
+    sceGumMatrixMode(GU_MODEL);
+    sceGumLoadIdentity();
+    sceGumTranslate(&t1); sceGumRotateY(yaw); sceGumTranslate(&t2);
+    if (pitch != 0.0f) sceGumRotateX(pitch);
+    if (hang) sceGumTranslate(&t3);
+    sceGumScale(&s);
+    sceGumUpdateMatrix();
+    sceGuColor(col);
+    sceGumDrawArray(GU_TRIANGLES, VTX_TYPE, 36, 0, cube);
+}
+
+typedef struct { unsigned int skin, shirt, pants, hair, eye; } HPal;
+static const HPal HPAL_PLAYER = { 0xff90b8f0, 0xff405830, 0xff604838, 0xff2040a0, 0xff202020 };
+static const HPal HPAL_Z[3] = {
+    { 0xff60b080, 0xff506890, 0xff404858, 0xff203030, 0xff2020e0 },
+    { 0xff70c090, 0xff3030a0, 0xff303038, 0xff202040, 0xff30d0ff },
+    { 0xff508060, 0xff403060, 0xff303038, 0xff182018, 0xff2020e0 }
+};
+static const HPal HPAL_HIT = { 0xffd0d0ff, 0xffc0c0ff, 0xffb0b0ff, 0xffd0d0ff, 0xff20e0ff };
+static const float Z_K[3] = { 1.0f, 0.95f, 1.45f };
+
+static void draw_humanoid(float x, float z, float yaw, float k, const HPal *p, float legSw, float armL, float armR,
+                          int weapon, int lod, int player) {
+    float c = cosf(yaw), s = sinf(yaw);
+    if (lod) {
+        body_part(x, z, yaw, 0, 0.0f, 0, 0, 0, 0.55f * k, 1.55f * k, 0.32f * k, p->shirt);
+        body_part(x, z, yaw, 0, 1.5f * k, 0, 0, 0, 0.42f * k, 0.42f * k, 0.42f * k, p->skin);
+        return;
+    }
+    body_part(x, z, yaw, -0.16f * k, 0.85f * k, 0, legSw, 1, 0.24f * k, 0.85f * k, 0.26f * k, p->pants);
+    body_part(x, z, yaw,  0.16f * k, 0.85f * k, 0, -legSw, 1, 0.24f * k, 0.85f * k, 0.26f * k, p->pants);
+    body_part(x, z, yaw, 0, 0.85f * k, 0, 0, 0, 0.62f * k, 0.7f * k, 0.34f * k, p->shirt);
+    body_part(x, z, yaw, 0, 1.55f * k, 0, 0, 0, 0.42f * k, 0.4f * k, 0.4f * k, p->skin);
+    body_part(x, z, yaw, 0, 1.93f * k, 0, 0, 0, 0.46f * k, 0.12f * k, 0.46f * k, p->hair);
+    body_part(x, z, yaw, -0.1f * k, 1.72f * k, 0.2f * k, 0, 0, 0.07f * k, 0.07f * k, 0.05f * k, p->eye);
+    body_part(x, z, yaw,  0.1f * k, 1.72f * k, 0.2f * k, 0, 0, 0.07f * k, 0.07f * k, 0.05f * k, p->eye);
+    if (player) {
+        body_part(x, z, yaw, 0, 1.86f * k, 0.25f * k, 0, 0, 0.32f * k, 0.05f * k, 0.18f * k, p->hair);
+        body_part(x, z, yaw, 0, 0.95f * k, -0.26f * k, 0, 0, 0.44f * k, 0.52f * k, 0.2f * k, 0xff304048);
+    }
+    body_part(x, z, yaw, -0.40f * k, 1.5f * k, 0, armR, 1, 0.18f * k, 0.7f * k, 0.18f * k, p->shirt);
+    body_part(x, z, yaw,  0.40f * k, 1.5f * k, 0, armL, 1, 0.18f * k, 0.7f * k, 0.18f * k, p->shirt);
+    if (weapon > 0) draw_weapon(weapon, x - 0.40f * k * c, 1.5f * k, z + 0.40f * k * s, yaw, armR, 0.7f * k);
+}
+
+static void draw_corpse(float x, float z, float yaw, float k, const HPal *p) {
+    body_part(x, z, yaw, 0, 0.2f * k, 0, -1.5708f, 0, 0.6f * k, 1.55f * k, 0.34f * k, p->shirt);
+    body_part(x, z, yaw, 0, 0.05f * k, -1.75f * k, 0, 0, 0.42f * k, 0.42f * k, 0.42f * k, p->skin);
+}
+
+/* ---------- cena ---------- */
+static void fence_line(float x1, float z1, float x2, float z2) {
+    float dx = x2 - x1, dz = z2 - z1, len = sqrtf(dx * dx + dz * dz);
+    float mx = (x1 + x2) * 0.5f, mz = (z1 + z2) * 0.5f;
+    if (dist2d(px, pz, mx, mz) > len * 0.5f + 45.0f) return;
+    float ang = atan2f(dx, dz); int n = (int)(len / 6.0f); if (n < 1) n = 1;
+    box(mx, 0.5f, mz, 0.12f, 0.12f, len, ang, 0xff505860);
+    box(mx, 1.1f, mz, 0.12f, 0.12f, len, ang, 0xff505860);
+    for (int i = 0; i <= n; i++) box(x1 + dx * i / n, 0, z1 + dz * i / n, 0.25f, 1.5f, 0.25f, 0, 0xff303840);
+}
+
+static void draw_car(float x, float z, float ang, int idx) {
+    static const unsigned int cc[4] = { 0xff3040a0, 0xff707878, 0xff305870, 0xff404040 };
+    float c = cosf(ang), s = sinf(ang);
+    box(x, 0.35f, z, 2.2f, 0.9f, 4.2f, ang, cc[idx % 4]);
+    box(x - s * 0.2f, 1.25f, z - c * 0.2f, 1.9f, 0.8f, 2.2f, ang, 0xff202830);
+    for (int a = -1; a <= 1; a += 2) for (int b = -1; b <= 1; b += 2) {
+        float lx = a * 1.1f, lz = b * 1.3f;
+        box(x + lx * c + lz * s, 0, z - lx * s + lz * c, 0.3f, 0.6f, 0.6f, ang, 0xff101010);
+    }
+}
+
+static void draw_building(const Bld *b) {
+    float dz = b->z + b->door * (b->hd + 0.05f);
+    box(b->x, 0, b->z, b->hw * 2, b->h, b->hd * 2, 0, b->wall);
+    box(b->x, b->h, b->z, b->hw * 2 + 0.5f, 0.6f, b->hd * 2 + 0.5f, 0, b->roof);
+    if (b->h > 10.0f) return;
+    box(b->x, 0, dz, 1.2f, 2.2f, 0.12f, 0, 0xff203040);
+    box(b->x - b->hw * 0.55f, 1.6f, dz, 0.9f, 0.9f, 0.1f, 0, 0xff101418);
+    box(b->x + b->hw * 0.55f, 1.6f, dz, 0.9f, 0.9f, 0.1f, 0, 0xff101418);
+}
+
+static void draw_world_pois(void) {
+    /* roads */
+    for (int i = 0; i < NROADS; i++) {
+        float x1 = ROADS[i][0], z1 = ROADS[i][1], x2 = ROADS[i][2], z2 = ROADS[i][3];
+        float mx = (x1 + x2) * 0.5f, mz = (z1 + z2) * 0.5f;
+        float lx = fabsf(x2 - x1), lz = fabsf(z2 - z1);
+        if (dist2d(px, pz, mx, mz) > (lx > lz ? lx : lz) * 0.5f + 45.0f) continue;
+        if (lx > lz) box(mx, 0.04f, mz, lx, 0.08f, 5.0f, 0, 0xff484c50);
+        else box(mx, 0.04f, mz, 5.0f, 0.08f, lz, 0, 0xff484c50);
+    }
+    /* lago */
+    if (NEAR(LAKE_X, LAKE_Z, 70)) box(LAKE_X, 0.02f, LAKE_Z, LAKE_HX * 2, 0.1f, LAKE_HZ * 2, 0, 0xffa06030);
+    /* cidade, posto, fazenda, torre, base militar */
+    for (int i = 0; i < NB; i++) if (NEAR(BLD[i].x, BLD[i].z, 75)) draw_building(&BLD[i]);
+    for (int i = 0; i < NCARS; i++) if (NEAR(CARS[i][0], CARS[i][1], 60)) draw_car(CARS[i][0], CARS[i][1], CARS[i][2], i);
+    if (NEAR(-35, -52, 70)) {
+        box(-33, 3.2f, -50, 6.0f, 0.4f, 4.0f, 0, 0xff2020b0);
+        box(-35.5f, 0, -48.5f, 0.3f, 3.2f, 0.3f, 0, 0xffc0c0c0); box(-30.5f, 0, -48.5f, 0.3f, 3.2f, 0.3f, 0, 0xffc0c0c0);
+        box(-34, 0, -50, 0.7f, 1.4f, 0.7f, 0, 0xff2020d0); box(-32, 0, -50, 0.7f, 1.4f, 0.7f, 0, 0xff2020d0);
+    }
+    if (NEAR(66, 24, 70)) { box(66, 0, 24, 2.5f, 7.0f, 2.5f, 0, 0xffa0a8a8); box(66, 7.0f, 24, 2.8f, 0.8f, 2.8f, 0, 0xff303030); }
+    if (NEAR(-65, -15, 80)) {
+        box(-65, 16.0f, -15, 4.5f, 0.6f, 4.5f, 0, 0xff404850);
+        box(-65, 16.6f, -15, 0.2f, 6.0f, 0.2f, 0, 0xffc0c0c0);
+        box(-65, 22.4f, -15, 0.6f, 0.6f, 0.6f, 0, (((int)(gameTime * 2.0f)) & 1) ? 0xff2020ff : 0xff202060);
+    }
+    if (NEAR(68, 53, 80)) {
+        fence_line(54, 39, 82, 39); fence_line(82, 39, 82, 67); fence_line(82, 67, 54, 67); fence_line(54, 67, 54, 39);
+        box(66, 0, 60, 4.0f, 2.2f, 3.0f, 0, 0xff486038); box(72, 0, 46, 4.0f, 2.2f, 3.0f, 0, 0xff486038);
+        for (int a = -1; a <= 1; a += 2) for (int b = -1; b <= 1; b += 2) box(80 + a * 0.9f, 0, 42 + b * 0.9f, 0.25f, 6.0f, 0.25f, 0, 0xff505858);
+        box(80, 6.0f, 42, 2.8f, 0.4f, 2.8f, 0, 0xff303838);
+        box(76, 0.05f, 46, 6.0f, 0.1f, 6.0f, 0, 0xff303030); box(76, 0.12f, 46, 0.5f, 0.05f, 3.0f, 0, 0xffe0e0e0);
+        box(76, 0.12f, 46, 2.0f, 0.05f, 0.5f, 0, 0xffe0e0e0);
+    }
+}
+
+static void draw_base(void) {
+    float fl = 0.5f + 0.5f * sinf(gameTime * 12.0f);
+    box(BASE_X, 0.05f, BASE_Z, 1.4f, 0.3f, 0.3f, 0.6f, 0xff203050); box(BASE_X, 0.05f, BASE_Z, 1.4f, 0.3f, 0.3f, -0.6f, 0xff203050);
+    box(BASE_X, 0.2f, BASE_Z, 0.7f, 0.5f + fl * 0.5f, 0.7f, 0, 0xff2080ff);
+    box(BASE_X, 0.5f, BASE_Z, 0.4f, 0.4f + fl * 0.4f, 0.4f, 0, 0xff30e0ff);
+    box(-5, 0, -4, 3.6f, 1.8f, 3.0f, 0, 0xff486038); box(-5, 1.8f, -4, 3.6f, 0.4f, 1.0f, 0, 0xff384828);
+    box(5, 0, -4, 1.8f, 1.0f, 1.0f, 0, 0xff3a6a9a); box(5, 1.0f, -4, 0.8f, 0.5f, 0.6f, 0, 0xff303030);
+    box(5.6f, 1.0f, -4, 0.1f, 2.4f, 0.1f, 0, 0xffc0c0c0);
+    box(HELI_X, 0.05f, HELI_Z, 7.0f, 0.1f, 7.0f, 0, 0xff404040);
+    box(HELI_X, 0.12f, HELI_Z, 0.5f, 0.05f, 3.0f, 0, 0xffe0e0e0); box(HELI_X, 0.12f, HELI_Z, 2.0f, 0.05f, 0.5f, 0, 0xffe0e0e0);
+    if (rescue == 0) for (int i = 0; i < 16; i++) {
+        float a = i * (PI_F / 8.0f);
+        box(BASE_X + cosf(a) * SAFE_R, 0, BASE_Z + sinf(a) * SAFE_R, 0.4f, 0.5f, 0.4f, 0, 0xffa0e0a0);
+    }
+    if (rescue == 2) {
+        float t = 90.0f - rescueT, y = (t < 5.0f) ? (1.0f - t / 5.0f) * 22.0f : 0.0f;
+        box(HELI_X, 0.4f + y, HELI_Z, 2.2f, 1.8f, 5.0f, 0, 0xff405030);
+        box(HELI_X, 1.1f + y, HELI_Z - 4.5f, 0.6f, 0.6f, 4.0f, 0, 0xff405030);
+        box(HELI_X - 1.3f, 0.2f + y, HELI_Z, 0.15f, 0.15f, 4.5f, 0, 0xff202020); box(HELI_X + 1.3f, 0.2f + y, HELI_Z, 0.15f, 0.15f, 4.5f, 0, 0xff202020);
+        box(HELI_X, 2.2f + y, HELI_Z, 9.0f, 0.08f, 0.5f, gameTime * 25.0f, 0xff202020);
+        box(HELI_X, 2.2f + y, HELI_Z, 9.0f, 0.08f, 0.5f, gameTime * 25.0f + 1.57f, 0xff202020);
+    }
+}
+
+static void draw_scene(void) {
+    float dl = daylight(), nt = nightness();
+    float b = 0.2f + 0.8f * dl;
+    float skyR = 110.0f * (1 - nt) + 12.0f * nt, skyG = 190.0f * (1 - nt) + 18.0f * nt, skyB = 235.0f * (1 - nt) + 40.0f * nt;
+    unsigned int sky = 0xff000000 | ((unsigned int)skyB << 16) | ((unsigned int)skyG << 8) | (unsigned int)skyR;
+    sceGuClearColor(sky);
+    sceGuClearDepth(0);
+    sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT | GU_FAST_CLEAR_BIT);
+
+    sceGumMatrixMode(GU_PROJECTION);
+    sceGumLoadIdentity();
+    sceGumPerspective(70.0f, 16.0f / 9.0f, 1.0f, 200.0f);
+    sceGumMatrixMode(GU_VIEW);
+    sceGumLoadIdentity();
+    ScePspFVector3 eye = { px - sinf(cam) * 11.0f, 7.0f, pz - cosf(cam) * 11.0f };
+    ScePspFVector3 ctr = { px, 1.5f, pz };
+    ScePspFVector3 up  = { 0, 1, 0 };
+    sceGumLookAt(&eye, &ctr, &up);
+
+    sceGuEnable(GU_LIGHTING);
+    sceGuEnable(GU_LIGHT0);
+    ScePspFVector3 dir = { 0.4f, 1.0f, 0.3f };
+    sceGuLight(0, GU_DIRECTIONAL, GU_DIFFUSE, &dir);
+    unsigned int lc = 0xff000000 | ((unsigned int)(165 * b) << 16) | ((unsigned int)(165 * b) << 8) | (unsigned int)(165 * b);
+    sceGuLightColor(0, GU_DIFFUSE, lc);
+    sceGuAmbient(0xff000000 | ((unsigned int)(105 * b) << 16) | ((unsigned int)(105 * b) << 8) | (unsigned int)(105 * b));
+    sceGuColorMaterial(GU_AMBIENT | GU_DIFFUSE);
+
+    groundC1 = 0xff2e7a3e; groundC2 = 0xff296f38;
+    draw_ground();
+    draw_world_pois();
+    draw_base();
+
+    /* caixas de saque */
+    for (int i = 0; i < nloot; i++) {
+        Loot *L = &loot[i];
+        if (L->looted) continue;
+        float d = dist2d(px, pz, L->x, L->z);
+        if (L->kind == 3) {
+            if (d < 95.0f) box(L->x, 0, L->z, 0.5f, 14.0f, 0.5f, 0, 0xff30e0ff);
+            if (d < 70.0f) box(L->x, 0, L->z, 1.0f, 0.8f, 1.0f, 0, 0xff30c0ff);
+        } else if (d < 40.0f && L->kind != 1) {
+            box(L->x, 0, L->z, 0.9f, 0.7f, 0.9f, 0, 0xff3a6a9a);
+            box(L->x, 0.9f + 0.15f * sinf(gameTime * 3.0f + i), L->z, 0.35f, 0.35f, 0.35f, 0, L->kind == 2 ? 0xff40e040 : 0xff30e0ff);
+        } else if (d < 25.0f && L->kind == 1) {
+            box(L->x - 2.2f, 2.0f + 0.15f * sinf(gameTime * 3.0f + i), L->z - 1.0f, 0.35f, 0.35f, 0.35f, 0, 0xff30e0ff);
+        }
+    }
+
+    /* armas coletaveis no chao */
+    for (int i = 0; i < NWP; i++) {
+        WPick *wp = &wpick[i];
+        if (wp->taken) continue;
+        float d = dist2d(px, pz, wp->x, wp->z);
+        if (d > 60.0f) continue;
+        float by = 0.9f + 0.12f * sinf(gameTime * 2.5f + i);
+        draw_weapon(wp->w, wp->x, by, wp->z, gameTime * 1.5f, -1.5708f, 0.0f);
+        box(wp->x, 0.0f, wp->z, 0.9f, 0.08f, 0.9f, 0, 0xffe0e040);
+        if (d < 45.0f) box(wp->x, 0.0f, wp->z, 0.12f, 6.0f, 0.12f, 0, 0xffe0e040);
+    }
+
+    /* arvores */
+    for (int i = 0; i < NTREES; i++) {
+        float tdx = treeX[i] - px, tdz = treeZ[i] - pz;
+        if (tdx * tdx + tdz * tdz > 55.0f * 55.0f) continue;
+        box(treeX[i], 0, treeZ[i], 0.7f, treeH[i], 0.7f, 0, 0xff203848);
+        if (i % 4 == 0) box(treeX[i] + 0.5f, treeH[i] - 1.2f, treeZ[i], 1.4f, 0.25f, 0.25f, 0.5f, 0xff203848);
+        else box(treeX[i], treeH[i] - 0.6f, treeZ[i], 3.0f, 2.6f, 3.0f, 0.4f * i, (i % 3 == 0) ? 0xff1c5a30 : 0xff1a4a28);
+    }
+
+    /* efeitos de combate */
+    if (swingT > 0) {
+        float fx = sinf(pang), fz = cosf(pang);
+        box(px + fx * 1.6f, 0.9f, pz + fz * 1.6f, 1.6f, 0.15f, 0.3f, pang + 1.57f + swingT * 8.0f, 0xffe0f0ff);
+    }
+    if (shotT > 0) {
+        float mx = (shotX1 + shotX2) * 0.5f, mz = (shotZ1 + shotZ2) * 0.5f, len = dist2d(shotX1, shotZ1, shotX2, shotZ2);
+        box(mx, 1.2f, mz, 0.08f, 0.08f, len, atan2f(shotX2 - shotX1, shotZ2 - shotZ1), 0xff60f0ff);
+        box(shotX1, 1.1f, shotZ1, 0.4f, 0.4f, 0.4f, 0, 0xff30e0ff);
+    }
+
+    /* sombras */
+    box(px, 0.1f, pz, 1.0f, 0.02f, 0.6f, 0, 0xff000000);
+    for (int i = 0; i < NZ; i++)
+        if (zomb[i].active && zomb[i].state != 2 && NEAR(zomb[i].x, zomb[i].z, 50))
+            box(zomb[i].x, 0.1f, zomb[i].z, 1.0f * Z_K[zomb[i].type], 0.02f, 0.7f * Z_K[zomb[i].type], 0, 0xff000000);
+
+    /* zumbis em 3D */
+    for (int i = 0; i < NZ; i++) {
+        Zomb *z = &zomb[i];
+        if (!z->active) continue;
+        float d = dist2d(px, pz, z->x, z->z);
+        if (d > 60.0f) continue;
+        float k = Z_K[z->type];
+        if (z->state == 2) { if (z->corpse > 0) draw_corpse(z->x, z->z, z->ang, k, &HPAL_Z[z->type]); continue; }
+        float ph = gameTime * (z->state == 1 ? 7.0f : 2.5f) + i * 1.7f;
+        float sw = sinf(ph) * (z->state == 1 ? 0.8f : 0.35f);
+        float arm = -1.35f + sinf(ph * 0.7f) * 0.15f;
+        if (z->atk > 0.6f) arm = -1.95f + sinf(gameTime * 20.0f) * 0.2f;
+        draw_humanoid(z->x, z->z, z->ang, k, z->hurt > 0 ? &HPAL_HIT : &HPAL_Z[z->type], sw, arm, arm, 0, d > 38.0f, 0);
+    }
+
+    /* jogador em 3D */
+    {
+        float sw = moving ? sinf(walkPhase) * 0.8f : 0.0f, aR, aL;
+        if (curW >= 4) { aR = -1.45f + (shotT > 0 ? 0.18f : 0.0f); aL = -1.25f; }
+        else {
+            aR = -0.7f - sw * 0.4f; aL = sw * 0.6f;
+            if (swingT > 0) aR = -2.6f + (1.0f - swingT / 0.18f) * 2.8f;
+        }
+        if (mode == 3) draw_corpse(px, pz, pang, 1.0f, &HPAL_PLAYER);
+        else draw_humanoid(px, pz, pang, rollT > 0 ? 0.8f : 1.0f, hurtT > 0.25f ? &HPAL_HIT : &HPAL_PLAYER, sw, aL, aR, curW, 0, 1);
+    }
+
+    /* na tela de titulo: zumbis ao lado, olhando para o personagem */
+    if (appState != APP_PLAY && appState != APP_SPLASH && appState != APP_POST) {
+        float rx = -cosf(cam), rz = sinf(cam), fx2 = sinf(cam), fz2 = cosf(cam);
+        float sw = sinf(appT * 3.0f) * 0.3f;
+        float zx = px - rx * 8.0f + fx2 * 1.0f, zz = pz - rz * 8.0f + fz2 * 1.0f;
+        draw_humanoid(zx, zz, atan2f(px - zx, pz - zz), 1.0f, &HPAL_Z[0], sw, -1.35f, -1.35f, 0, 0, 0);
+        float wx = px + rx * 8.5f + fx2 * 2.0f, wz = pz + rz * 8.5f + fz2 * 2.0f;
+        draw_humanoid(wx, wz, atan2f(px - wx, pz - wz), 1.45f, &HPAL_Z[2], -sw, -1.35f, -1.35f, 0, 0, 0);
+    }
+    sceGuDisable(GU_LIGHTING);
+}
+
+/* ---------- interface ---------- */
 static void window(int x0, int y0, int x1, int y1) {
     rect2d(x0, y0, x1, y1, 0xf060c0f0);
     rect2d(x0 + 4, y0 + 4, x1 - 4, y1 - 4, 0xf0201008);
+}
+static void ui_center(int y, int sc, unsigned int col, const char *str) {
+    ui_text((480 - (int)strlen(str) * 6 * sc) / 2, y, sc, col, str);
+}
+static void bar(int x, int y, int w, int h, float v, unsigned int col) {
+    if (v < 0) v = 0;
+    if (v > 100) v = 100;
+    rect2d(x - 1, y - 1, x + w + 1, y + h + 1, 0xff000000);
+    rect2d(x, y, x + w, y + h, 0xff383838);
+    if (v > 0) rect2d(x, y, x + (int)(w * v / 100.0f), y + h, col);
+}
+
+static void minimap_dot(float wx, float wz, int sz, unsigned int col, int clampEdge) {
+    const int X0 = 408, Y0 = 4, S = 68; const float k = (S / 2.0f) / 60.0f;
+    float dx = wx - px, dz = wz - pz;
+    float sx = (dx * (-cosf(cam)) + dz * sinf(cam)) * k, sy = (dx * sinf(cam) + dz * cosf(cam)) * k;
+    float lim = S / 2.0f - 3.0f;
+    if (sx > lim || sx < -lim || sy > lim || sy < -lim) {
+        if (!clampEdge) return;
+        float m = fmaxf(fabsf(sx), fabsf(sy)); sx = sx / m * lim; sy = sy / m * lim;
+    }
+    int ix = X0 + S / 2 + (int)sx, iy = Y0 + S / 2 - (int)sy;
+    rect2d(ix - sz / 2, iy - sz / 2, ix + sz - sz / 2, iy + sz - sz / 2, col);
+}
+
+static void draw_minimap(void) {
+    rect2d(406, 2, 478, 74, 0xe0000000);
+    rect2d(408, 4, 476, 72, 0xff2a3a2a);
+    minimap_dot(BASE_X, BASE_Z, 4, 0xff40d040, 1);
+    if (rescue > 0) minimap_dot(HELI_X, HELI_Z, 4, 0xffe08040, 1);
+    for (int i = 0; i < nloot; i++) if (loot[i].kind == 3 && !loot[i].looted) minimap_dot(loot[i].x, loot[i].z, 3, 0xff30e0ff, 1);
+    for (int i = 0; i < NWP; i++) if (!wpick[i].taken) minimap_dot(wpick[i].x, wpick[i].z, 3, 0xffe040e0, 0);
+    for (int i = 0; i < NZ; i++) if (zomb[i].active && zomb[i].state != 2) minimap_dot(zomb[i].x, zomb[i].z, 2, zomb[i].state == 1 ? 0xff2020ff : 0xff3030a0, 0);
+    rect2d(440, 36, 445, 41, 0xffffffff);
 }
 
 static void draw_ui(void) {
@@ -1651,222 +1488,125 @@ static void draw_ui(void) {
     sceGuEnable(GU_BLEND);
     sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
 
-    /* HUD */
-    rect2d(0, 0, 372, 76, 0x90000000);
-    sprintf(buf, "$%d Ovo:%d Leite:%d Carne:%d", money, inv[IT_OVO], inv[IT_LEITE], inv[IT_CARNE]);
-    ui_shadow(4, 3, 2, 0xff40e0ff, buf);
-    sprintf(buf, "< %s >  Sem:%d  Col:%d", cropName[selCrop], seeds[selCrop], inv[selCrop]);
-    ui_shadow(4, 21, 2, 0xffffffff, buf);
-    sprintf(buf, "Dia %d %s %s%s", (int)(gameTime / 150.0f) + 1, seasonName[season()],
-            raining ? (season() == 3 ? "NEVE" : "CHUVA") : "", festival_active() ? " FESTA!" : "");
-    ui_shadow(4, 39, 2, 0xffc0ffc0, buf);
-    sprintf(buf, "Peixe:%d Fruta:%d Missoes:%d", inv[IT_PEIXE], inv[IT_FRUTA], missionsDone);
-    ui_shadow(4, 57, 2, 0xffffffff, buf);
+    /* barras de status */
+    rect2d(0, 0, 204, 84, 0x90000000);
+    ui_text(4, 4, 1, 0xffffffff, "VIDA");  bar(44, 4, 150, 7, hp, 0xff3030e0);
+    ui_text(4, 16, 1, 0xffffffff, "FOME"); bar(44, 16, 150, 7, hunger, 0xff30a0f0);
+    ui_text(4, 28, 1, 0xffffffff, "SEDE"); bar(44, 28, 150, 7, thirst, 0xffe08030);
+    ui_text(4, 40, 1, 0xffffffff, "ENER"); bar(44, 40, 150, 7, stam, 0xff40d0a0);
+    int hh = (int)hour_now(), mm = (int)((hour_now() - hh) * 60.0f);
+    sprintf(buf, "Dia %d  %02d:%02d  Abates:%d", day_number(), hh, mm, kills);
+    ui_text(4, 54, 1, 0xffc0ffc0, buf);
+    if (rescue == 0) { if (parts < 4) sprintf(buf, "Obj: achar pecas de radio %d/4", parts); else strcpy(buf, "Obj: use o radio no acampamento"); }
+    else if (rescue == 1) strcpy(buf, "Obj: sobreviva ate o resgate!");
+    else strcpy(buf, "Obj: embarque no helicoptero!");
+    ui_text(4, 66, 1, 0xff40e0ff, buf);
+    draw_minimap();
+    rect2d(330, 76, 476, 100, 0x90000000);
+    if (wAmmo[curW] >= 0) sprintf(buf, "%s  %s:%d", wName[curW], itemName[wAmmo[curW]], inv[wAmmo[curW]]); else strcpy(buf, wName[curW]);
+    ui_text(334, 80, 1, 0xffffffff, buf);
+    { static const int ci[3] = { I_COM, I_AGUA, I_BAND };
+      sprintf(buf, "< %s x%d >  Cima: usar", itemName[ci[selUse]], inv[ci[selUse]]);
+      ui_text(334, 90, 1, 0xffc0c0c0, buf); }
+    if (rescue == 1 || rescue == 2) {
+        rect2d(210, 4, 402, 24, 0xb0000000);
+        if (rescue == 1) sprintf(buf, "RESGATE: helicoptero em %ds!", (int)rescueT + 1);
+        else sprintf(buf, "HELICOPTERO: embarque em %ds!", (int)rescueT + 1);
+        ui_text(214, 10, 1, 0xff40e0ff, buf);
+    }
 
     if (mode == 0) {
         if (showHelp) {
-            static const char *help[6] = {
-                "Analog:andar  L/R:camera  < >:semente",
-                "X:plantar/colher/pescar  Quad:comprar semente",
-                "Circ:vender tudo (mercado)",
-                "Tri:falar/entrar/coletar (casa, celeiro, vila,",
-                "   loja, galinheiro, curral)   START:menu",
-                "SELECT:ajuda"
-            };
-            rect2d(0, 78, 276, 136, 0x90000000);
-            for (int i = 0; i < 6; i++) ui_shadow(4, 82 + i * 9, 1, 0xffffffff, help[i]);
+            rect2d(0, 86, 250, 126, 0x90000000);
+            ui_text(4, 90, 1, 0xffffffff, "Analog:andar  L/R:camera  X:interagir");
+            ui_text(4, 100, 1, 0xffffffff, "Quad:atacar  Circ:rolar  Tri:trocar arma");
+            ui_text(4, 110, 1, 0xffffffff, "Esq/Dir:item  Cima:usar  START:menu");
+            ui_text(4, 118, 1, 0xff909090, "SELECT: esconder ajuda");
         }
         if (msgTimer > 0) {
-            int w = (int)strlen(msg) * 12, x = (480 - w) / 2;
-            rect2d(x - 6, 184, x + w + 6, 206, 0xa0000000);
-            ui_shadow(x, 188, 2, 0xffffffff, msg);
+            int w = (int)strlen(msg) * 12; if (w > 470) w = 470;
+            int x = (480 - w) / 2;
+            rect2d(x - 6, 186, x + w + 6, 208, 0xa0000000);
+            ui_text(x, 190, 2, 0xffffffff, msg);
         }
-        const char *pr = NULL; char pb[64], sub[64]; sub[0] = 0;
-        int v = nearest_npc();
-        if (v >= 0) {
-            sprintf(pb, "%s: %d %s ($%d)", npcName[v], mis[v].qty, itemName[mis[v].item], mis[v].reward);
-            pr = pb;
-            sprintf(sub, "Tri: entregar   (voce tem %d)", inv[mis[v].item]);
-        } else if (near_hall()) {
-            pr = "PREFEITURA  Tri: abrir quadro";
-        } else if (near_fest()) {
-            pr = "FESTIVAL  Tri: abrir barraca";
-        } else if (near_barn()) {
-            pr = "CELEIRO  Tri: fabricar produtos";
-        } else if (near_house()) {
-            sprintf(pb, "CASA nivel %d  Tri: abrir", houseLvl); pr = pb;
-        } else if (at_market()) {
-            pr = "MERCADO  Quad:comprar  Circ:vender";
-            sprintf(sub, "Semente %s: $%d   (< > troca o tipo)", cropName[selCrop], cropSeed[selCrop]);
-        } else if (near_shop()) {
-            pr = "LOJA  Tri: abrir";
-        } else {
-            int i = nearest_plot(), f = nearest_fruit();
-            if (i >= 0) {
-                if (plots[i].stage == 0) { sprintf(pb, "X: plantar %s", cropName[selCrop]); pr = pb; }
-                else if (plots[i].stage == 3) pr = "X: colher";
-                else pr = "Crescendo...";
-            } else if (f >= 0) {
-                pr = ftree[f].ripe ? "X: colher fruta" : "Fruta amadurecendo...";
-            } else if (near_lake()) {
-                if (season() == 3) pr = "Lago congelado!";
-                else if (fishState == 0) pr = "X: pescar";
-                else if (fishState == 1) pr = "Esperando o peixe...";
-                else pr = "PEIXE! Aperte X!";
-            } else if (near_area(PEN_X, PEN_Z)) {
-                sprintf(pb, "Tri: coletar ovos (%d)", coopEggs); pr = pb;
-            } else if (near_area(COW_X, COW_Z)) {
-                sprintf(pb, "Tri: coletar leite:%d carne:%d", penMilk, penMeat); pr = pb;
+        const char *pr = NULL; char pb[64];
+        if (near_heli()) pr = "X: embarcar no helicoptero!";
+        else if (near_camp()) pr = "ACAMPAMENTO  X: abrir";
+        else if (nearest_wpick() >= 0) { sprintf(pb, "X: pegar %s", wName[wpick[nearest_wpick()].w]); pr = pb; }
+        else {
+            int l = nearest_loot();
+            if (l >= 0) pr = loot[l].kind == 3 ? "X: pegar peca de radio!" : (loot[l].kind == 1 ? "X: revistar carro" : "X: revistar");
+            else if (near_lake()) pr = "X: beber agua";
+            else {
+                float dd; int zi = nearest_zombie(5.0f, &dd);
+                if (zi >= 0) { sprintf(pb, "Zumbi perto! Quad: atacar"); pr = pb; }
             }
         }
         if (pr) {
             int w = (int)strlen(pr) * 12, x = (480 - w) / 2;
-            int top = sub[0] ? 222 : 238;
-            rect2d(x - 6, top, x + w + 6, 266, 0xa0000000);
-            if (sub[0]) {
-                int w2 = (int)strlen(sub) * 6;
-                ui_shadow((480 - w2) / 2, 227, 1, 0xffc0c0c0, sub);
-            }
-            ui_shadow(x, 243, 2, 0xff40e0ff, pr);
+            rect2d(x - 6, 238, x + w + 6, 266, 0xa0000000);
+            ui_text(x, 245, 2, 0xff40e0ff, pr);
         }
+        if (hurtT > 0) rect2d(0, 0, 480, 272, ((unsigned int)(hurtT / 0.4f * 110.0f) << 24) | 0x000000ff);
+        if (hp < 25 && ((int)(gameTime * 3.0f) & 1)) rect2d(0, 0, 480, 272, 0x300000ff);
     } else if (mode == 1) {
         static const char *opt[6] = { "Continuar", "", "", "Salvar e ir ao menu", "Menu sem salvar", "Sair do jogo" };
         rect2d(0, 0, 480, 272, 0x80000000);
         window(96, 30, 384, 242);
-        ui_shadow(180, 38, 2, 0xff40e0ff, "== MENU ==");
-        sprintf(buf, "%s - slot %d", worldNames[worldName], curSlot + 1);
-        ui_shadow(108, 56, 1, 0xffc0c0c0, buf);
+        ui_text(180, 38, 2, 0xff40e0ff, "== MENU ==");
+        sprintf(buf, "%s - slot %d - %s", survNames[nameIdx], curSlot + 1, diffNames[difficulty]);
+        ui_text(108, 56, 1, 0xffc0c0c0, buf);
         for (int i = 0; i < 6; i++) {
             int y = 68 + i * 20;
             if (i == menuSel) rect2d(106, y - 3, 374, y + 17, 0xc0a06020);
             if (i == 1) sprintf(buf, "%s Musica: %s", i == menuSel ? ">" : " ", musicOn ? "ligada" : "desligada");
             else if (i == 2) sprintf(buf, "%s Salvar (slot %d)", i == menuSel ? ">" : " ", curSlot + 1);
             else sprintf(buf, "%s %s", i == menuSel ? ">" : " ", opt[i]);
-            ui_shadow(110, y, 2, 0xffffffff, buf);
+            ui_text(110, y, 2, 0xffffffff, buf);
         }
-        ui_shadow(108, 194, 1, 0xffc0c0c0, "Cima/Baixo + X     START volta");
-        if (menuMsg[0]) ui_shadow(110, 208, 2, 0xff60ff60, menuMsg);
+        ui_text(108, 194, 1, 0xffc0c0c0, "Cima/Baixo + X     START volta");
+        if (menuMsg[0]) ui_text(110, 208, 2, 0xff60ff60, menuMsg);
     } else if (mode == 2) {
-        static const char *nm[5] = { "Botas velozes", "Adubo (+50% cresc.)", "Racao (+50% animais)",
-                                     "Ampliar terreno (+12)", "Sair" };
         rect2d(0, 0, 480, 272, 0x80000000);
-        window(36, 36, 444, 246);
-        ui_shadow(180, 46, 2, 0xff40e0ff, "== LOJA ==");
-        for (int i = 0; i < 5; i++) {
-            int y = 70 + i * 22;
-            if (i == menuSel) rect2d(46, y - 3, 434, y + 17, 0xc0a06020);
-            ui_shadow(56, y, 2, 0xffffffff, nm[i]);
-            if (i < 4) {
-                if (shop_owned(i)) ui_shadow(330, y, 2, 0xff60ff60, "COMPRADO");
-                else { sprintf(buf, "$%d", shopPrice[i]); ui_shadow(330, y, 2, 0xff40e0ff, buf); }
-            }
+        window(36, 24, 444, 254);
+        ui_text(150, 30, 2, 0xff40e0ff, "== ACAMPAMENTO ==");
+        for (int i = 0; i < 7; i++) {
+            int y = 54 + i * 21;
+            if (i == menuSel) rect2d(46, y - 3, 434, y + 16, 0xc0a06020);
+            if (i == 0) strcpy(buf, "Bandagem (2 Pano)");
+            else if (i == 1) strcpy(buf, "Municao x6 (2 Sucata)");
+            else if (i == 2) strcpy(buf, "Cartuchos x4 (3 Sucata)");
+            else if (i == 3) strcpy(buf, "Balas de rifle x3 (4 Sucata)");
+            else if (i == 4) strcpy(buf, "Dormir ate amanhecer");
+            else if (i == 5) sprintf(buf, "Radio: chamar resgate (%d/4)", parts);
+            else strcpy(buf, "Sair");
+            ui_text(56, y, 2, 0xffffffff, buf);
         }
-        sprintf(buf, "Seu dinheiro: $%d", money);
-        ui_shadow(56, 184, 2, 0xffffffff, buf);
-        ui_shadow(56, 204, 1, 0xffc0c0c0, "Cima/Baixo + X comprar   START/O sair");
-        if (menuMsg[0]) ui_shadow(56, 218, 2, 0xff60ff60, menuMsg);
+        sprintf(buf, "Madeira:%d Sucata:%d Pano:%d Bandagem:%d Pecas:%d/4", inv[I_MAD], inv[I_SUC], inv[I_PANO], inv[I_BAND], parts);
+        ui_text(46, 204, 1, 0xffc0ffc0, buf);
+        sprintf(buf, "Municao:%d Cartuchos:%d Balas rifle:%d Comida:%d Agua:%d", inv[I_MUN], inv[I_CART], inv[I_RIFLE], inv[I_COM], inv[I_AGUA]);
+        ui_text(46, 214, 1, 0xffc0ffc0, buf);
+        ui_text(46, 224, 1, 0xffc0c0c0, "Cima/Baixo + X escolhe   START/O sai");
+        if (menuMsg[0]) ui_text(46, 235, 2, 0xff60ff60, menuMsg);
     } else if (mode == 3) {
-        rect2d(0, 0, 480, 272, 0x80000000);
-        window(36, 40, 444, 232);
-        ui_shadow(190, 48, 2, 0xff40e0ff, "== CASA ==");
-        sprintf(buf, "Nivel %d/3: %s", houseLvl, houseName[houseLvl - 1]);
-        ui_shadow(56, 72, 2, 0xffc0ffc0, buf);
-        for (int i = 0; i < 3; i++) {
-            int y = 98 + i * 22;
-            if (i == menuSel) rect2d(46, y - 3, 434, y + 17, 0xc0a06020);
-            if (i == 0) strcpy(buf, "Dormir ate amanhecer");
-            else if (i == 1) {
-                if (houseLvl >= 3) strcpy(buf, "Casa no nivel maximo");
-                else sprintf(buf, "Melhorar casa ($%d)", houseCost[houseLvl]);
-            } else strcpy(buf, "Sair");
-            ui_shadow(56, y, 2, 0xffffffff, buf);
+        rect2d(0, 0, 480, 272, 0xc0000020);
+        ui_center(80, 4, 0xff2020e0, "VOCE MORREU");
+        sprintf(buf, "Zumbis derrubados: %d    Mortes: %d", kills, deaths);
+        ui_center(130, 1, 0xffc0c0c0, buf);
+        if (deathT > 1.2f) {
+            ui_center(160, 2, 0xffffffff, "X: renascer no acampamento");
+            ui_center(190, 1, 0xffc0c0c0, "Voce perde metade dos itens ao renascer.");
         }
-        ui_shadow(56, 170, 1, 0xffc0c0c0, "Dormir passa a noite, salva o jogo e a fazenda produz.");
-        ui_shadow(56, 180, 1, 0xffc0c0c0, "Casa melhor = mais producao durante o sono. Nivel 3 = premio!");
-        if (menuMsg[0]) ui_shadow(56, 196, 2, 0xff60ff60, menuMsg);
-    } else if (mode == 6) {
-        static const char *fo[3] = { "Vender tudo (+50%)", "Bilhete do sorteio ($25)", "Sair" };
-        rect2d(0, 0, 480, 272, 0x80000000);
-        window(36, 36, 444, 246);
-        ui_shadow(114, 46, 2, 0xff40e0ff, "== FESTIVAL DA VILA ==");
-        for (int i = 0; i < 3; i++) {
-            int y = 76 + i * 24;
-            if (i == menuSel) rect2d(46, y - 3, 434, y + 17, 0xc0a06020);
-            ui_shadow(56, y, 2, 0xffffffff, fo[i]);
-        }
-        sprintf(buf, "Seu dinheiro: $%d", money);
-        ui_shadow(56, 160, 2, 0xffffffff, buf);
-        ui_shadow(56, 184, 1, 0xffc0c0c0, "Hoje tudo vale 50% mais: vendas aqui e recompensas de missoes!");
-        ui_shadow(56, 196, 1, 0xffc0c0c0, "Sorteio: premios de $20 a $300.   Cima/Baixo + X   START/O sair");
-        if (menuMsg[0]) ui_shadow(56, 214, 2, 0xff60ff60, menuMsg);
-    } else if (mode == 5) {
-        rect2d(0, 0, 480, 272, 0x80000000);
-        window(36, 36, 444, 246);
-        ui_shadow(170, 46, 2, 0xff40e0ff, "== CELEIRO ==");
-        for (int i = 0; i < 5; i++) {
-            int y = 70 + i * 22;
-            if (i == menuSel) rect2d(46, y - 3, 434, y + 17, 0xc0a06020);
-            if (i < 4) {
-                sprintf(buf, "%d %s > %s", recQty[i], itemName[recIn[i]], itemName[recOut[i]]);
-                ui_shadow(56, y, 2, 0xffffffff, buf);
-                sprintf(buf, "Tem:%d", inv[recIn[i]]);
-                ui_shadow(340, y, 2, inv[recIn[i]] >= recQty[i] ? 0xff60ff60 : 0xff8080ff, buf);
-            } else ui_shadow(56, y, 2, 0xffffffff, "Sair");
-        }
-        sprintf(buf, "Pao:%d Queijo:%d Suco:%d Molho:%d", inv[IT_PAO], inv[IT_QUEIJO], inv[IT_SUCO], inv[IT_MOLHO]);
-        ui_shadow(56, 184, 1, 0xffffffff, buf);
-        ui_shadow(56, 198, 1, 0xffc0c0c0, "Produtos valem mais! Venda no mercado ou use nas missoes.");
-        ui_shadow(56, 210, 1, 0xffc0c0c0, "Cima/Baixo + X fabricar   START/O sair");
-        if (menuMsg[0]) ui_shadow(56, 224, 2, 0xff60ff60, menuMsg);
-    } else {
-        rect2d(0, 0, 480, 272, 0x80000000);
-        window(24, 30, 456, 242);
-        ui_shadow(150, 38, 2, 0xff40e0ff, "== PREFEITURA ==");
-        for (int v = 0; v < NNPC; v++) {
-            int have = inv[mis[v].item];
-            sprintf(buf, "%s: %d %s %d/%d $%d", npcName[v], mis[v].qty, itemName[mis[v].item],
-                    have > mis[v].qty ? mis[v].qty : have, mis[v].qty, mis[v].reward);
-            ui_shadow(40, 58 + v * 19, 2, have >= mis[v].qty ? 0xff60ff60 : 0xffffffff, buf);
-        }
-        sprintf(buf, "Missoes concluidas: %d", missionsDone);
-        ui_shadow(40, 176, 2, 0xff40e0ff, buf);
-        ui_shadow(40, 198, 1, 0xffc0c0c0, "X: entregar tudo que der     START/O: sair");
-        { char hb[72]; sprintf(hb, "Meta final: Mansao + 10 missoes (feitas: %d/10)", missionsDone); ui_shadow(40, 208, 1, 0xffc0c0c0, hb); }
-        if (menuMsg[0]) ui_shadow(40, 220, 2, 0xff60ff60, menuMsg);
-    }
-
-    if (sleepFade > 0) {
-        float a = sleepFade > 1.0f ? 1.0f : sleepFade;
-        rect2d(0, 0, 480, 272, ((unsigned int)(a * 255.0f) << 24));
-        if (sleepFade > 0.6f) ui_shadow(170, 124, 2, 0xffffffff, "Dormindo... Zzz");
     }
 
     sceGuDisable(GU_BLEND);
     sceGuEnable(GU_DEPTH_TEST);
 }
 
-/* ---------- telas: abertura, titulo, novo mundo, carregar, creditos ---------- */
-static void ui_center(int y, int sc, unsigned int col, const char *str) {
-    ui_text((480 - (int)strlen(str) * 6 * sc) / 2, y, sc, col, str);
-}
-
-static void draw_art(const char *const *rows, int h, int w, int x, int y, int sc, const Pal *pal, int dog) {
-    for (int r = 0; r < h; r++) {
-        int c = 0;
-        while (c < w) {
-            unsigned int col = dog ? dog_color(rows[r][c]) : pal_color(rows[r][c], pal);
-            if (!col) { c++; continue; }
-            int c2 = c + 1;
-            while (c2 < w && (dog ? dog_color(rows[r][c2]) : pal_color(rows[r][c2], pal)) == col) c2++;
-            rect2d(x + c * sc, y + r * sc, x + c2 * sc, y + (r + 1) * sc, col);
-            c = c2;
-        }
-    }
-}
-
+/* ---------- telas: abertura, titulo, novo jogo, carregar, creditos ---------- */
 typedef struct { const char *t; int sc; unsigned int col; } CLine;
 static const CLine CREDITS[] = {
-    { "FAZENDA SIMULATOR GS", 3, 0xff40e0ff },
+    { "SOBREVIVENDO EM GS", 3, 0xff40e0ff },
     { "", 1, 0 },
     { "Um jogo desenvolvido por", 2, 0xffffffff },
     { "MECANIC ENGINE GAMER", 3, 0xfff0e040 },
@@ -1883,9 +1623,8 @@ static const CLine CREDITS[] = {
     { "Programacao", 1, 0xffc0c0c0 },
     { "MECANIC ENGINE GAMER", 2, 0xffffffff },
     { "", 1, 0 },
-    { "Moradores da vila", 1, 0xffc0c0c0 },
-    { "Maria  Joao  Ana  Pedro  Lucia  Bento", 1, 0xffffffff },
-    { "Companheiro: Rex", 1, 0xffffffff },
+    { "Sobreviventes", 1, 0xffc0c0c0 },
+    { "Rafa  Bia  Leo  Ana  Dudu  Nina  Caio  Lia", 1, 0xffffffff },
     { "", 1, 0 },
     { "Feito para PSP e PPSSPP", 2, 0xffffffff },
     { "", 1, 0 },
@@ -1895,6 +1634,17 @@ static const CLine CREDITS[] = {
 #define NCRED ((int)(sizeof(CREDITS) / sizeof(CREDITS[0])))
 static int cred_h(const CLine *l) { return l->sc * 8 + (l->sc >= 2 ? 10 : 6); }
 static int credits_height(void) { int h = 0; for (int i = 0; i < NCRED; i++) h += cred_h(&CREDITS[i]); return h; }
+
+static void draw_heli_art(int x, int y, int blink) {
+    rect2d(x, y + 6, x + 60, y + 26, 0xff405030);
+    rect2d(x + 40, y + 9, x + 56, y + 18, 0xffe0c080);
+    rect2d(x - 36, y + 10, x, y + 16, 0xff405030);
+    rect2d(x - 40, y + 2, x - 34, y + 20, 0xff304020);
+    rect2d(x - 14, y, x + 74, y + 3, 0xff202020);
+    rect2d(x + 28, y + 3, x + 32, y + 6, 0xff202020);
+    rect2d(x + 4, y + 28, x + 56, y + 31, 0xff202020);
+    if (blink) rect2d(x + 26, y - 4, x + 32, y, 0xff2020ff);
+}
 
 static void draw_app_ui(void) {
     char buf[96];
@@ -1909,42 +1659,38 @@ static void draw_app_ui(void) {
         if (a > 1.0f) a = 1.0f;
         if (a > 0) rect2d(0, 0, 480, 272, ((unsigned int)(a * 255.0f) << 24));
     } else if (appState == APP_TITLE) {
-        static const char *to[4] = { "Novo mundo", "Carregar jogo", "Creditos", "Sair" };
-        rect2d(0, 0, 480, 272, 0x50000000);
-        window(66, 8, 414, 114);
-        ui_center(16, 5, 0xff40e0ff, "FAZENDA");
-        ui_center(60, 3, 0xffffffff, "SIMULATOR GS");
-        ui_center(90, 2, 0xfff0e040, "MECANIC ENGINE GAMER");
-        window(130, 122, 350, 232);
+        static const char *to[4] = { "Novo jogo", "Carregar jogo", "Creditos", "Sair" };
+        rect2d(0, 0, 480, 272, 0x70000000);
+        window(66, 6, 414, 124);
+        ui_center(14, 4, 0xff2020e0, "SOBREVIVENDO");
+        ui_center(50, 6, 0xff40e0ff, "EM GS");
+        ui_center(104, 2, 0xfff0e040, "MECANIC ENGINE GAMER");
+        window(130, 130, 350, 240);
         for (int i = 0; i < 4; i++) {
-            int y = 132 + i * 24;
+            int y = 140 + i * 24;
             if (i == titleSel) rect2d(138, y - 3, 342, y + 17, 0xc0a06020);
             sprintf(buf, "%s %s", i == titleSel ? ">" : " ", to[i]);
             ui_text(146, y, 2, 0xffffffff, buf);
         }
-        draw_art(SPR_A, SPR_H, SPR_W, 30, 168, 4, &PAL_PLAYER, 0);
-        draw_art(DOG_A, 8, 12, 392, 208, 4, NULL, 1);
-        ui_center(250, 1, 0xffc0c0c0, "(c) MECANIC ENGINE GAMER - Fazenda Simulator GS");
+        ui_center(254, 1, 0xffc0c0c0, "(c) MECANIC ENGINE GAMER - Sobrevivendo Em GS");
     } else if (appState == APP_NEW) {
         rect2d(0, 0, 480, 272, 0x80000000);
         window(36, 20, 444, 252);
-        ui_center(28, 2, 0xff40e0ff, "== NOVO MUNDO ==");
-        for (int i = 0; i < 7; i++) {
-            int y = 56 + i * 22;
+        ui_center(28, 2, 0xff40e0ff, "== NOVO JOGO ==");
+        for (int i = 0; i < 6; i++) {
+            int y = 58 + i * 24;
             if (i == nwSel) rect2d(46, y - 3, 434, y + 17, 0xc0a06020);
-            unsigned int col = (i == 5) ? 0xff60ff60 : 0xffffffff;
+            unsigned int col = (i == 4) ? 0xff60ff60 : 0xffffffff;
             if (i == 0) sprintf(buf, "Slot: %d %s", nwSlot + 1, slotInfos[nwSlot].used ? "(sobrescrever!)" : "(vazio)");
-            else if (i == 1) sprintf(buf, "Fazenda: %s", worldNames[nwName]);
-            else if (i == 2) { if (nwSeed) sprintf(buf, "Semente: %d", nwSeed); else strcpy(buf, "Semente: aleatoria"); }
-            else if (i == 3) sprintf(buf, "Estacao: %s", seasonName[nwSeason]);
-            else if (i == 4) sprintf(buf, "Dificuldade: %s", diffNames[nwDiff]);
-            else if (i == 5) strcpy(buf, "CRIAR MUNDO");
+            else if (i == 1) sprintf(buf, "Sobrevivente: %s", survNames[nwName]);
+            else if (i == 2) { if (nwSeed) sprintf(buf, "Semente do mundo: %d", nwSeed); else strcpy(buf, "Semente do mundo: aleatoria"); }
+            else if (i == 3) sprintf(buf, "Dificuldade: %s", diffNames[nwDiff]);
+            else if (i == 4) strcpy(buf, "COMECAR A SOBREVIVER");
             else strcpy(buf, "Voltar");
             ui_text(56, y, 2, col, buf);
         }
-        ui_text(46, 214, 1, 0xffc0c0c0, "Cima/Baixo escolhe   Esq/Dir muda   X confirma   O volta");
-        ui_text(46, 226, 1, 0xffc0c0c0, "A semente muda a posicao das arvores do seu mundo.");
-        if (menuMsg[0]) ui_text(46, 238, 1, 0xff60ff60, menuMsg);
+        ui_text(46, 216, 1, 0xffc0c0c0, "Cima/Baixo escolhe   Esq/Dir muda   X confirma   O volta");
+        ui_text(46, 228, 1, 0xffc0c0c0, "A semente muda a posicao dos zumbis, arvores e saques.");
     } else if (appState == APP_LOAD) {
         rect2d(0, 0, 480, 272, 0x80000000);
         window(36, 24, 444, 254);
@@ -1953,14 +1699,11 @@ static void draw_app_ui(void) {
             int y = 62 + i * 50;
             if (i == slotSel) rect2d(46, y - 4, 434, y + 36, 0xc0a06020);
             if (slotInfos[i].used) {
-                sprintf(buf, "Slot %d: %s", i + 1, worldNames[slotInfos[i].nameIdx]);
+                sprintf(buf, "Slot %d: %s", i + 1, survNames[slotInfos[i].nameIdx]);
                 ui_text(56, y, 2, 0xffffffff, buf);
-                sprintf(buf, "Dia %d   Dinheiro: $%d", slotInfos[i].day, slotInfos[i].money);
+                sprintf(buf, "Dia %d   Pecas de radio: %d/4   Abates: %d", slotInfos[i].day, slotInfos[i].parts, slotInfos[i].kills);
                 ui_text(56, y + 20, 1, 0xffc0ffc0, buf);
-            } else {
-                sprintf(buf, "Slot %d: (vazio)", i + 1);
-                ui_text(56, y, 2, 0xff909090, buf);
-            }
+            } else { sprintf(buf, "Slot %d: (vazio)", i + 1); ui_text(56, y, 2, 0xff909090, buf); }
         }
         if (menuMsg[0]) ui_text(46, 214, 2, 0xff60ff60, menuMsg);
         ui_text(46, 238, 1, 0xffc0c0c0, "X: carregar     Quadrado: apagar     O: voltar");
@@ -1975,24 +1718,20 @@ static void draw_app_ui(void) {
         ui_center(260, 1, 0xff909090, "START: pular    X: acelerar");
     } else if (appState == APP_POST) {
         float t = appT;
-        if (t < 3.0f) ui_center(120, 2, 0xffffffff, "Algum tempo depois...");
-        else if (t < 7.0f) {
-            ui_center(40, 2, 0xffffffff, "Rex desenterrou algo no pomar...");
-            draw_art(DOG_A, 8, 12, 204, 110, 6, NULL, 1);
-        } else if (t < 11.0f) {
-            ui_center(30, 2, 0xff40e0ff, "Um velho mapa do tesouro!");
-            rect2d(160, 70, 340, 190, 0xff608090);
-            rect2d(164, 74, 336, 186, 0xff90c8e8);
-            for (int i = 0; i < 9; i++) rect2d(176 + i * 12, 150 - (i % 3) * 10, 182 + i * 12, 156 - (i % 3) * 10, 0xff305080);
-            for (int i = 0; i < 6; i++) {
-                rect2d(300 + i * 4, 110 + i * 4, 304 + i * 4, 114 + i * 4, 0xff2020d0);
-                rect2d(320 - i * 4, 110 + i * 4, 324 - i * 4, 114 + i * 4, 0xff2020d0);
-            }
-            draw_art(DOG_A, 8, 12, 60, 150, 4, NULL, 1);
+        for (int i = 0; i < 8; i++) rect2d(0, i * 34, 480, i * 34 + 34, 0xff000000 | ((20 + i * 3) << 16) | ((10 + i) << 8) | 8);
+        if (t < 3.0f) ui_center(120, 2, 0xffffffff, "Algumas semanas depois...");
+        else if (t < 8.0f) {
+            ui_center(40, 2, 0xff40e0ff, "[RADIO] Aqui e a Central...");
+            ui_center(70, 1, 0xffffffff, "Captamos um novo sinal de socorro vindo de uma ilha distante.");
+            for (int i = 0; i < 24; i++) { int h = 6 + (int)(24.0f * fabsf(sinf(appT * 6.0f + i * 0.7f))); rect2d(120 + i * 10, 150 - h, 126 + i * 10, 150 + h, 0xff40e0ff); }
+            ui_center(200, 1, 0xffc0c0c0, "...repetindo: ha sobreviventes. Preciso de voluntarios.");
+        } else if (t < 12.0f) {
+            ui_center(40, 2, 0xffffffff, "O helicoptero decola de novo...");
+            draw_heli_art(-60 + (int)((t - 8.0f) * 140.0f), 130, ((int)(t * 4.0f)) & 1);
         } else if (t < 14.0f) {
-            ui_center(120, 2, 0xffffffff, "Mas essa e outra historia...");
+            ui_center(120, 2, 0xffffffff, "A sobrevivencia continua...");
         } else {
-            ui_center(60, 3, 0xff40e0ff, "FAZENDA SIMULATOR GS 2");
+            ui_center(60, 3, 0xff40e0ff, "SOBREVIVENDO EM GS 2");
             ui_center(110, 4, 0xfff0e040, "EM BREVE");
             ui_center(170, 2, 0xffffffff, "MECANIC ENGINE GAMER");
             if (((int)(appT * 2.0f)) & 1) ui_center(230, 2, 0xffc0c0c0, creditsFromGame ? "X: voltar ao jogo" : "X: voltar ao menu");
@@ -2007,67 +1746,58 @@ static void draw_app_ui(void) {
 static void app_update(float dt, unsigned int pressed, unsigned int held) {
     appT += dt;
     if (appState != APP_SPLASH && appState != APP_POST) cam += dt * 0.12f;
-
     if (appState == APP_SPLASH) {
         if (appT > 3.0f || (pressed & (PSP_CTRL_START | PSP_CTRL_CROSS))) { appState = APP_TITLE; titleSel = 0; appT = 0; }
     } else if (appState == APP_TITLE) {
-        if (pressed & PSP_CTRL_UP)   { titleSel = (titleSel + 3) % 4; play_sfx(4); }
-        if (pressed & PSP_CTRL_DOWN) { titleSel = (titleSel + 1) % 4; play_sfx(4); }
+        if (pressed & PSP_CTRL_UP)   { titleSel = (titleSel + 3) % 4; play_sfx(5); }
+        if (pressed & PSP_CTRL_DOWN) { titleSel = (titleSel + 1) % 4; play_sfx(5); }
         if (pressed & PSP_CTRL_CROSS) {
-            play_sfx(4);
+            play_sfx(5);
             if (titleSel == 0) {
-                refresh_slots();
-                nwSel = 0; nwName = 0; nwSeed = 0; nwSeason = 0; nwDiff = 1; nwSlot = 0;
+                refresh_slots(); nwSel = 0; nwName = 0; nwSeed = 0; nwDiff = 1; nwSlot = 0;
                 for (int i = 2; i >= 0; i--) if (!slotInfos[i].used) nwSlot = i;
                 menuMsg[0] = 0; appState = APP_NEW;
-            } else if (titleSel == 1) {
-                refresh_slots(); slotSel = 0; delConfirm = -1; menuMsg[0] = 0; appState = APP_LOAD;
-            } else if (titleSel == 2) {
-                creditsFromGame = 0; creditsY = 272.0f; appT = 0; appState = APP_CREDITS;
-            } else running = 0;
+            } else if (titleSel == 1) { refresh_slots(); slotSel = 0; delConfirm = -1; menuMsg[0] = 0; appState = APP_LOAD; }
+            else if (titleSel == 2) { creditsFromGame = 0; creditsY = 272.0f; appT = 0; appState = APP_CREDITS; }
+            else running = 0;
         }
     } else if (appState == APP_NEW) {
-        if (pressed & PSP_CTRL_UP)   { nwSel = (nwSel + 6) % 7; play_sfx(4); }
-        if (pressed & PSP_CTRL_DOWN) { nwSel = (nwSel + 1) % 7; play_sfx(4); }
+        if (pressed & PSP_CTRL_UP)   { nwSel = (nwSel + 5) % 6; play_sfx(5); }
+        if (pressed & PSP_CTRL_DOWN) { nwSel = (nwSel + 1) % 6; play_sfx(5); }
         int d = 0;
         if (pressed & PSP_CTRL_LEFT) d = -1;
         if (pressed & PSP_CTRL_RIGHT) d = 1;
         if (d) {
-            play_sfx(4);
+            play_sfx(5);
             if (nwSel == 0) nwSlot = (nwSlot + 3 + d) % 3;
             else if (nwSel == 1) nwName = (nwName + 8 + d) % 8;
             else if (nwSel == 2) { nwSeed += d; if (nwSeed < 0) nwSeed = 99; if (nwSeed > 99) nwSeed = 0; }
-            else if (nwSel == 3) nwSeason = (nwSeason + 4 + d) % 4;
-            else if (nwSel == 4) nwDiff = (nwDiff + 3 + d) % 3;
+            else if (nwSel == 3) nwDiff = (nwDiff + 3 + d) % 3;
         }
         if ((pressed & PSP_CTRL_LTRIGGER) && nwSel == 2) nwSeed = (nwSeed + 90) % 100;
         if ((pressed & PSP_CTRL_RTRIGGER) && nwSel == 2) nwSeed = (nwSeed + 10) % 100;
         if (pressed & PSP_CTRL_CIRCLE) appState = APP_TITLE;
         if (pressed & PSP_CTRL_CROSS) {
-            if (nwSel == 5) {
-                create_world();
-                appState = APP_PLAY; mode = 0;
-                say("Mundo criado! Boa sorte!"); play_sfx(3);
-            } else if (nwSel == 6) appState = APP_TITLE;
+            if (nwSel == 4) { create_world(); appState = APP_PLAY; mode = 0; say("Sobreviva! Ache 4 pecas de radio."); play_sfx(4); }
+            else if (nwSel == 5) appState = APP_TITLE;
         }
     } else if (appState == APP_LOAD) {
-        if (pressed & PSP_CTRL_UP)   { slotSel = (slotSel + 2) % 3; delConfirm = -1; menuMsg[0] = 0; play_sfx(4); }
-        if (pressed & PSP_CTRL_DOWN) { slotSel = (slotSel + 1) % 3; delConfirm = -1; menuMsg[0] = 0; play_sfx(4); }
+        if (pressed & PSP_CTRL_UP)   { slotSel = (slotSel + 2) % 3; delConfirm = -1; menuMsg[0] = 0; play_sfx(5); }
+        if (pressed & PSP_CTRL_DOWN) { slotSel = (slotSel + 1) % 3; delConfirm = -1; menuMsg[0] = 0; play_sfx(5); }
         if (pressed & PSP_CTRL_CIRCLE) appState = APP_TITLE;
         if (pressed & PSP_CTRL_SQUARE) {
-            if (!slotInfos[slotSel].used) { strcpy(menuMsg, "Slot vazio."); play_sfx(5); }
+            if (!slotInfos[slotSel].used) { strcpy(menuMsg, "Slot vazio."); play_sfx(10); }
             else if (delConfirm == slotSel) {
                 char pth[96]; slot_path(slotSel, pth); sceIoRemove(pth);
-                if (slotSel == 0) sceIoRemove(SAVE_DIR "/save.dat");
-                refresh_slots(); delConfirm = -1; strcpy(menuMsg, "Slot apagado."); play_sfx(2);
-            } else { delConfirm = slotSel; strcpy(menuMsg, "Quadrado de novo para apagar!"); play_sfx(5); }
+                refresh_slots(); delConfirm = -1; strcpy(menuMsg, "Slot apagado."); play_sfx(4);
+            } else { delConfirm = slotSel; strcpy(menuMsg, "Quadrado de novo para apagar!"); play_sfx(10); }
         }
         if (pressed & PSP_CTRL_CROSS) {
-            if (!slotInfos[slotSel].used) { strcpy(menuMsg, "Slot vazio."); play_sfx(5); }
+            if (!slotInfos[slotSel].used) { strcpy(menuMsg, "Slot vazio."); play_sfx(10); }
             else {
                 curSlot = slotSel;
-                if (load_game()) { appState = APP_PLAY; mode = 0; say("Jogo carregado!"); play_sfx(3); }
-                else { strcpy(menuMsg, "Erro ao carregar!"); play_sfx(5); }
+                if (load_game()) { appState = APP_PLAY; mode = 0; say("Jogo carregado!"); play_sfx(4); }
+                else { strcpy(menuMsg, "Erro ao carregar!"); play_sfx(10); }
             }
         }
     } else if (appState == APP_CREDITS) {
@@ -2077,7 +1807,7 @@ static void app_update(float dt, unsigned int pressed, unsigned int held) {
         else if ((pressed & PSP_CTRL_CIRCLE) && !creditsFromGame) appState = APP_TITLE;
     } else if (appState == APP_POST) {
         if ((pressed & PSP_CTRL_START) || (appT > 14.0f && (pressed & PSP_CTRL_CROSS))) {
-            if (creditsFromGame) { appState = APP_PLAY; mode = 0; say("Voce zerou o jogo! Continue jogando."); }
+            if (creditsFromGame) { appState = APP_PLAY; mode = 0; say("Voce escapou! Continue sobrevivendo."); }
             else { appState = APP_TITLE; titleSel = 0; }
         }
     }
@@ -2085,17 +1815,16 @@ static void app_update(float dt, unsigned int pressed, unsigned int held) {
 
 int main(void) {
     setup_callbacks();
-
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
     build_cube();
     build_ground();
-    build_sprites();
+    reset_state();
+    seed_rng = seed_for(0);
     init_world();
 
-    int at = sceKernelCreateThread("audio", audio_thread, 0x12, 0x10000,
-                                   PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU, NULL);
+    int at = sceKernelCreateThread("audio", audio_thread, 0x12, 0x10000, PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU, NULL);
     if (at >= 0) sceKernelStartThread(at, 0, NULL);
 
     sceGuInit();
@@ -2125,21 +1854,19 @@ int main(void) {
         unsigned int now = sceKernelGetSystemTimeLow();
         float dt = (now - last) / 1000000.0f; last = now;
         if (dt > 0.1f) dt = 0.1f;
-        if (sleepFade > 0) sleepFade -= dt;
-        songId = (appState == APP_PLAY) ? (festival_active() ? 4 : season()) : ((appState == APP_CREDITS || appState == APP_POST) ? 3 : 0);
 
         sceCtrlPeekBufferPositive(&pad, 1);
         unsigned int pressed = pad.Buttons & ~oldButtons;
         oldButtons = pad.Buttons;
 
         if (appState != APP_PLAY) app_update(dt, pressed, pad.Buttons);
-        else if (mode == 1) menu_update(pressed);
-        else if (mode == 2) shop_update(pressed);
-        else if (mode == 3) house_update(pressed);
-        else if (mode == 4) hall_update(pressed);
-        else if (mode == 5) barn_update(pressed);
-        else if (mode == 6) fest_update(pressed);
+        else if (mode == 1) pause_update(pressed);
+        else if (mode == 2) camp_update(pressed);
+        else if (mode == 3) death_update(dt, pressed);
         else update(dt, &pad, pressed);
+
+        songId = (appState == APP_PLAY) ? ((chasers > 0) ? 3 : (nightness() > 0.5f ? 2 : 1))
+                                        : ((appState == APP_CREDITS || appState == APP_POST) ? 4 : 0);
 
         sceGuStart(GU_DIRECT, list);
         if (appState == APP_SPLASH || appState == APP_POST) {
